@@ -1,0 +1,137 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../../core/api/api_client.dart';
+import '../../../../core/auth_state.dart';
+import '../../../../core/services/fcm_service.dart';
+
+class LoginScreen extends ConsumerStatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _userCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  bool _loading = false;
+  bool _obscure = true;
+
+  @override
+  void dispose() {
+    _userCtrl.dispose();
+    _passCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _loading = true);
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      const storage = FlutterSecureStorage();
+
+      // Thử admin login trước
+      try {
+        final adminRes = await dio.post('/admin/login', data: {
+          'username': _userCtrl.text.trim(),
+          'password': _passCtrl.text,
+        });
+        await storage.write(key: 'admin_token', value: adminRes.data['access_token'] as String);
+        if (mounted) context.go('/admin');
+        return;
+      } on DioException catch (e) {
+        if (e.response?.statusCode != 401) rethrow;
+        // 401 = không phải admin, tiếp tục thử user login
+      }
+
+      // User login thường
+      final res = await dio.post('/auth/login', data: {
+        'username': _userCtrl.text.trim(),
+        'password': _passCtrl.text,
+      });
+      final token = res.data['access_token'] as String;
+      await storage.write(key: 'access_token', value: token);
+      await storage.write(key: 'refresh_token', value: res.data['refresh_token']);
+      final me = await dio.get('/users/me');
+      await storage.write(key: 'user_id', value: me.data['id'] as String);
+      FcmService.registerToken(dio);
+      authTokenNotifier.value = token; // triggers GoRouter redirect → /home
+    } on DioException catch (e) {
+      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Đăng nhập thất bại';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.local_shipping_rounded, size: 72, color: Color(0xFF5B6AF0)),
+                  const SizedBox(height: 8),
+                  const Text('ShopHo', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+                  const Text('Ship hộ trong khu căn hộ', style: TextStyle(color: Colors.grey)),
+                  const SizedBox(height: 40),
+
+                  TextFormField(
+                    controller: _userCtrl,
+                    decoration: const InputDecoration(labelText: 'Tên đăng nhập', prefixIcon: Icon(Icons.person_outline)),
+                    validator: (v) => (v == null || v.isEmpty) ? 'Nhập username' : null,
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _passCtrl,
+                    obscureText: _obscure,
+                    decoration: InputDecoration(
+                      labelText: 'Mật khẩu',
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
+                        onPressed: () => setState(() => _obscure = !_obscure),
+                      ),
+                    ),
+                    validator: (v) => (v == null || v.isEmpty) ? 'Nhập mật khẩu' : null,
+                  ),
+                  const SizedBox(height: 28),
+
+                  FilledButton(
+                    onPressed: _loading ? null : _login,
+                    child: _loading
+                        ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('Đăng nhập'),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () => context.push('/register'),
+                    child: const Text('Chưa có tài khoản? Đăng ký ngay'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

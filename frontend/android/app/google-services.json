@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "376434193584",
+    "project_id": "shopho-578a7",
+    "storage_bucket": "shopho-578a7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:376434193584:android:3291d6c5b039f6a89ef775",
+        "android_client_info": {
+          "package_name": "com.example.shopho"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDal1UwtUZ-jasj7TUaa_wQRUSuntI29CU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

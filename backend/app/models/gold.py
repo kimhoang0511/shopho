@@ -1,0 +1,33 @@
+import enum
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String, Text, text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+
+class GoldTxType(str, enum.Enum):
+    top_up = "top_up"
+    order_lock = "order_lock"
+    order_reward = "order_reward"
+    order_refund = "order_refund"
+    withdrawal = "withdrawal"
+
+
+class GoldLedger(Base):
+    __tablename__ = "gold_ledger"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"))
+    tx_type: Mapped[GoldTxType] = mapped_column(Enum(GoldTxType, name="gold_tx_type"), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    balance_after: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"))
+
+    user: Mapped["User"] = relationship("User", back_populates="gold_transactions")

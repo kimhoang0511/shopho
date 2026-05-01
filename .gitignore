@@ -1,0 +1,65 @@
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+*.egg
+
+# ── Secrets & env ────────────────────────────────────────────
+.env
+*.env
+!.env.example
+firebase-service-account.json
+*.pem
+*.key
+*.p12
+*.pfx
+service-account*.json
+
+# ── Alembic ──────────────────────────────────────────────────
+alembic/versions/*.pyc
+
+# ── Flutter / Dart ───────────────────────────────────────────
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/build/
+frontend/pubspec.lock
+frontend/.idea/
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/key.properties
+frontend/ios/Pods/
+frontend/ios/.symlinks/
+frontend/ios/Flutter/Flutter.framework
+frontend/ios/Flutter/Flutter.podspec
+frontend/ios/Flutter/flutter_assets/
+frontend/*.iml
+frontend/coverage/
+
+# ── macOS ─────────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── IDE ───────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Docker volumes / local data ───────────────────────────────
+minio_data/
+redis_data/
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
