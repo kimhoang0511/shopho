@@ -1,28 +1,31 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:livekit_client/livekit_client.dart';
 
 import '../../core/api/api_client.dart';
+import '../../core/services/call_cancel_notifier.dart';
+import '../../core/services/call_service.dart';
 
-enum _CallStatus { waiting, connected }
+enum _CallState { connecting, talking, noAnswer, ended }
 
 class WebRtcCallScreen extends ConsumerStatefulWidget {
   final String orderId;
+  final String callId;
   final String counterpartName;
-  final bool isCaller;
+  final String livekitUrl;
+  /// Pre-provided token (caller). Empty string → screen fetches its own token (recipient).
+  final String token;
 
   const WebRtcCallScreen({
     super.key,
     required this.orderId,
+    required this.callId,
     required this.counterpartName,
-    required this.isCaller,
+    required this.livekitUrl,
+    required this.token,
   });
 
   @override
@@ -30,179 +33,187 @@ class WebRtcCallScreen extends ConsumerStatefulWidget {
 }
 
 class _WebRtcCallScreenState extends ConsumerState<WebRtcCallScreen> {
-  WebSocketChannel? _ws;
-  StreamSubscription? _wsSub;
+  late final Room _room;
+  EventsListener<RoomEvent>? _listener;
+  LocalAudioTrack? _audioTrack;
 
-  final _recorder = FlutterSoundRecorder();
-  final _player = FlutterSoundPlayer();
-  final _recorderController = StreamController<Uint8List>();
-  StreamSubscription? _recorderSub;
-  bool _recorderOpen = false;
-  bool _playerOpen = false;
-  bool _stopped = false;
+  _CallState _callState = _CallState.connecting;
+  bool _muted = false;
+  bool _disposed = false;
 
   Timer? _durationTimer;
+  Timer? _ringTimeout;
   Duration _elapsed = Duration.zero;
-  bool _muted = false;
-  bool _speaker = true;
-  _CallStatus _status = _CallStatus.waiting;
-
-  static const _sampleRate = 16000;
-  static const _bufferSize = 8192;
+  bool _cancelSent = false;
 
   @override
   void initState() {
     super.initState();
+    _room = Room();
+    callCancelNotifier.addListener(_onRemoteCancel);
     WidgetsBinding.instance.addPostFrameCallback((_) => _init());
   }
 
   @override
   void dispose() {
-    _cleanup();
+    _disposed = true;
+    callCancelNotifier.removeListener(_onRemoteCancel);
+    _durationTimer?.cancel();
+    _ringTimeout?.cancel();
+    _listener?.dispose();
+    _room.disconnect().then((_) => _room.dispose()).ignore();
+    // Tell CallKit the call is over so iOS removes the "ongoing call" status bar indicator.
+    if (widget.callId.isNotEmpty) {
+      FlutterCallkitIncoming.endCall(widget.callId);
+    }
     super.dispose();
   }
 
-  void _cleanup() {
-    if (_stopped) return;
-    _stopped = true;
+  void _onRemoteDisconnect() {
+    if (_disposed || !mounted) return;
     _durationTimer?.cancel();
-    _wsSub?.cancel();
-    _recorderSub?.cancel();
-    _ws?.sink.close();
-    if (_recorderOpen) {
-      _recorderOpen = false;
-      _recorder.stopRecorder().then((_) => _recorder.closeRecorder()).ignore();
+    _ringTimeout?.cancel();
+    if (_callState == _CallState.talking) {
+      setState(() => _callState = _CallState.ended);
+      Future.delayed(const Duration(seconds: 2), () => _hangup(sendCancel: false));
+    } else {
+      _hangup(sendCancel: false);
     }
-    if (_playerOpen) {
-      _playerOpen = false;
-      _player.stopPlayer().then((_) => _player.closePlayer()).ignore();
-    }
-    _recorderController.close().ignore();
+  }
+
+  void _onRemoteCancel() {
+    final cancelId = callCancelNotifier.value;
+    if (cancelId == null) return;
+    if (cancelId != widget.callId && widget.callId.isNotEmpty) return;
+    if (_disposed || !mounted) return;
+    _ringTimeout?.cancel();
+    setState(() => _callState = _CallState.noAnswer);
+    Future.delayed(const Duration(seconds: 2), () => _hangup(sendCancel: false));
   }
 
   Future<void> _init() async {
-    // Configure audio session for voice call (speaker by default)
-    final session = await AudioSession.instance;
-    await session.configure(AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-      avAudioSessionCategoryOptions:
-          AVAudioSessionCategoryOptions.defaultToSpeaker |
-              AVAudioSessionCategoryOptions.allowBluetooth,
-      avAudioSessionMode: AVAudioSessionMode.voiceChat,
-      androidAudioAttributes: const AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.speech,
-        usage: AndroidAudioUsage.voiceCommunication,
-      ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-      androidWillPauseWhenDucked: false,
-    ));
+    String token;
+    String livekitUrl = widget.livekitUrl;
 
-    // Open recorder
-    await _recorder.openRecorder();
-    _recorderOpen = true;
-
-    // Open player and start streaming mode
-    await _player.openPlayer();
-    _playerOpen = true;
-    await _player.startPlayerFromStream(
-      codec: Codec.pcm16,
-      interleaved: true,
-      numChannels: 1,
-      sampleRate: _sampleRate,
-      bufferSize: _bufferSize,
-    );
-
-    // Connect to audio relay WebSocket
-    const storage = FlutterSecureStorage();
-    final token = await storage.read(key: 'access_token') ?? '';
-    _ws = WebSocketChannel.connect(
-      Uri.parse('$wsBaseUrl/ws/orders/${widget.orderId}/audio?token=$token'),
-    );
-
-    _wsSub = _ws!.stream.listen(
-      (raw) async {
-        if (raw is List<int>) {
-          // Audio bytes from peer → feed to player
-          if (_playerOpen) {
-            _player.uint8ListSink?.add(Uint8List.fromList(raw));
-          }
-        } else if (raw is String) {
-          final msg = json.decode(raw) as Map<String, dynamic>;
-          switch (msg['type'] as String?) {
-            case 'start':
-              await _startMic();
-              if (mounted) {
-                setState(() => _status = _CallStatus.connected);
-                _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-                  if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
-                });
-              }
-            case 'hangup':
-              _hangup(sendSignal: false);
-          }
+    // Phase 1: resolve token
+    // For recipient (token is empty): try the prefetched token first.
+    // The prefetch was started in CallService when the user tapped Accept,
+    // so it has been running in parallel with navigation — may already be done.
+    try {
+      if (widget.token.isEmpty) {
+        final prefetchFuture = CallService.consumePrefetchedToken(widget.orderId);
+        Map<String, String>? prefetched;
+        if (prefetchFuture != null) {
+          prefetched = await prefetchFuture;
         }
-      },
-      onDone: () => _hangup(sendSignal: false),
-      onError: (_) => _hangup(sendSignal: false),
-    );
+        if (prefetched != null && prefetched['token']!.isNotEmpty) {
+          token = prefetched['token']!;
+          if (prefetched['livekit_url']!.isNotEmpty) livekitUrl = prefetched['livekit_url']!;
+        } else {
+          // Prefetch failed or wasn't started — fall back to a fresh fetch.
+          final res = await ref.read(apiClientProvider).dio
+              .post('/orders/${widget.orderId}/livekit-token');
+          token = res.data['token'] as String;
+          livekitUrl = res.data['livekit_url'] as String? ?? livekitUrl;
+        }
+      } else {
+        token = widget.token;
+      }
+    } catch (e) {
+      debugPrint('[LiveKit] token fetch failed: $e');
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+
+    // Phase 2: connect to LiveKit room AND initialize audio track in parallel.
+    // LocalAudioTrack.create() only opens the mic — it doesn't need the room.
+    // Overlapping it with room.connect() saves ~200-400ms.
+    try {
+      final connectFuture = _room.connect(
+        livekitUrl,
+        token,
+        roomOptions: const RoomOptions(
+          adaptiveStream: true,
+          dynacast: true,
+          defaultAudioPublishOptions: AudioPublishOptions(dtx: true),
+        ),
+      );
+      final trackFuture = LocalAudioTrack.create(const AudioCaptureOptions());
+
+      await connectFuture;
+      _audioTrack = await trackFuture;
+      await _room.localParticipant?.publishAudioTrack(_audioTrack!);
+
+      // Phase 3: wait for remote participant to join
+      _listener = _room.createListener()
+        ..on<ParticipantConnectedEvent>((_) {
+          if (mounted && _callState != _CallState.talking) {
+            _ringTimeout?.cancel();
+            setState(() => _callState = _CallState.talking);
+            _startDurationTimer();
+          }
+        })
+        ..on<ParticipantDisconnectedEvent>((_) => _onRemoteDisconnect())
+        ..on<RoomDisconnectedEvent>((_) => _onRemoteDisconnect());
+
+      // Remote participant already in room (recipient joins after caller)
+      if (_room.remoteParticipants.isNotEmpty && mounted) {
+        _ringTimeout?.cancel();
+        setState(() => _callState = _CallState.talking);
+        _startDurationTimer();
+      } else {
+        // No-answer timeout: 45s no one joins → noAnswer state → auto hang up
+        _ringTimeout = Timer(const Duration(seconds: 45), () {
+          if (_callState != _CallState.talking && !_disposed && mounted) {
+            setState(() => _callState = _CallState.noAnswer);
+            Future.delayed(const Duration(seconds: 2), () => _hangup());
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[LiveKit] connect error: $e');
+      if (mounted) Navigator.of(context).pop();
+    }
   }
 
-  Future<void> _startMic() async {
-    // Recorder writes PCM16 bytes into the stream controller's sink
-    await _recorder.startRecorder(
-      codec: Codec.pcm16,
-      toStream: _recorderController.sink,
-      sampleRate: _sampleRate,
-      numChannels: 1,
-      bufferSize: _bufferSize,
-    );
-    // Forward mic bytes to WebSocket (skip when muted)
-    _recorderSub = _recorderController.stream.listen((chunk) {
-      if (!_muted) _ws?.sink.add(chunk);
+  void _startDurationTimer() {
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
     });
   }
 
-  Future<void> _hangup({bool sendSignal = true}) async {
-    if (_stopped) return;
-    if (sendSignal) _ws?.sink.add(json.encode({'type': 'hangup'}));
-    _cleanup();
+  Future<void> _hangup({bool sendCancel = true}) async {
+    if (_disposed) return;
+    _disposed = true;
+    _durationTimer?.cancel();
+    _ringTimeout?.cancel();
+
+    // Pop immediately so the user sees instant feedback.
+    // Cleanup (cancel signal + LiveKit disconnect) runs in the background.
     if (mounted) Navigator.of(context).pop();
+
+    if (sendCancel && !_cancelSent && widget.callId.isNotEmpty) {
+      _cancelSent = true;
+      try {
+        final dio = ref.read(apiClientProvider).dio;
+        dio
+            .post('/orders/${widget.orderId}/call-cancel',
+                data: {'call_id': widget.callId})
+            .ignore();
+      } catch (_) {}
+    }
+    _room.disconnect().ignore();
   }
 
-  void _toggleMute() => setState(() => _muted = !_muted);
-
-  Future<void> _toggleSpeaker() async {
-    final next = !_speaker;
-    final session = await AudioSession.instance;
-    await session.configure(AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-      avAudioSessionCategoryOptions: next
-          ? AVAudioSessionCategoryOptions.defaultToSpeaker |
-              AVAudioSessionCategoryOptions.allowBluetooth
-          : AVAudioSessionCategoryOptions.allowBluetooth,
-      avAudioSessionMode: AVAudioSessionMode.voiceChat,
-      androidAudioAttributes: AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.speech,
-        usage: next
-            ? AndroidAudioUsage.media
-            : AndroidAudioUsage.voiceCommunication,
-      ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-      androidWillPauseWhenDucked: false,
-    ));
-    setState(() => _speaker = next);
-  }
-
-  String get _statusLabel => switch (_status) {
-        _CallStatus.waiting =>
-          widget.isCaller ? 'Đang đổ chuông...' : 'Đang kết nối...',
-        _CallStatus.connected => _fmt(_elapsed),
-      };
-
-  String _fmt(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
+  Future<void> _toggleMute() async {
+    final track = _audioTrack;
+    if (track == null) return;
+    if (_muted) {
+      await track.unmute();
+    } else {
+      await track.mute();
+    }
+    if (mounted) setState(() => _muted = !_muted);
   }
 
   @override
@@ -218,23 +229,28 @@ class _WebRtcCallScreenState extends ConsumerState<WebRtcCallScreen> {
             children: [
               const SizedBox(height: 60),
 
-              // Avatar + name + status
+              // Avatar + name + status badge
               Column(
                 children: [
-                  CircleAvatar(
-                    radius: 56,
-                    backgroundColor:
-                        const Color(0xFF5B6AF0).withValues(alpha: 0.3),
-                    child: Text(
-                      widget.counterpartName.isNotEmpty
-                          ? widget.counterpartName[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        fontSize: 48,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
+                  Stack(
+                    alignment: Alignment.bottomRight,
+                    children: [
+                      CircleAvatar(
+                        radius: 56,
+                        backgroundColor: const Color(0xFF5B6AF0).withValues(alpha: 0.3),
+                        child: Text(
+                          widget.counterpartName.isNotEmpty
+                              ? widget.counterpartName[0].toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                            fontSize: 48,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ),
-                    ),
+                      _StateIndicator(state: _callState),
+                    ],
                   ),
                   const SizedBox(height: 24),
                   Text(
@@ -245,13 +261,10 @@ class _WebRtcCallScreenState extends ConsumerState<WebRtcCallScreen> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _statusLabel,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.65),
-                      fontSize: 15,
-                    ),
+                  const SizedBox(height: 12),
+                  _StateBadge(
+                    state: _callState,
+                    elapsed: _elapsed,
                   ),
                 ],
               ),
@@ -265,14 +278,10 @@ class _WebRtcCallScreenState extends ConsumerState<WebRtcCallScreen> {
                     _CircleBtn(
                       icon: _muted ? Icons.mic_off : Icons.mic,
                       label: _muted ? 'Bỏ tắt' : 'Tắt mic',
+                      enabled: _callState == _CallState.talking,
                       onTap: _toggleMute,
                     ),
-                    _HangupBtn(onTap: () => _hangup()),
-                    _CircleBtn(
-                      icon: _speaker ? Icons.volume_up : Icons.volume_off,
-                      label: _speaker ? 'Loa ngoài' : 'Tai nghe',
-                      onTap: () => _toggleSpeaker(),
-                    ),
+                    _HangupBtn(onTap: _hangup),
                   ],
                 ),
               ),
@@ -284,19 +293,96 @@ class _WebRtcCallScreenState extends ConsumerState<WebRtcCallScreen> {
   }
 }
 
-// ─── Widgets ──────────────────────────────────────────────────
+// ─── State indicator dot on avatar ───────────────────────────
+
+class _StateIndicator extends StatelessWidget {
+  final _CallState state;
+  const _StateIndicator({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final (color, icon) = switch (state) {
+      _CallState.connecting => (Colors.grey, Icons.sync),
+      _CallState.talking    => (Colors.greenAccent, Icons.phone_in_talk),
+      _CallState.noAnswer   => (Colors.red, Icons.phone_missed),
+      _CallState.ended      => (Colors.grey, Icons.call_end),
+    };
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xFF1A1A3E), width: 2),
+      ),
+      child: Icon(icon, size: 15, color: Colors.white),
+    );
+  }
+}
+
+// ─── Status badge below name ──────────────────────────────────
+
+class _StateBadge extends StatelessWidget {
+  final _CallState state;
+  final Duration elapsed;
+  const _StateBadge({required this.state, required this.elapsed});
+
+  String get _label => switch (state) {
+    _CallState.connecting => 'Đang kết nối',
+    _CallState.talking    => _fmt(elapsed),
+    _CallState.noAnswer   => 'Đã ngắt cuộc gọi',
+    _CallState.ended      => 'Cuộc gọi đã kết thúc',
+  };
+
+  Color get _color => switch (state) {
+    _CallState.connecting => Colors.white54,
+    _CallState.talking    => Colors.greenAccent,
+    _CallState.noAnswer   => Colors.redAccent,
+    _CallState.ended      => Colors.white54,
+  };
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return 'Đang trao đổi · $m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: _color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _color.withValues(alpha: 0.4)),
+      ),
+      child: Text(
+        _label,
+        style: TextStyle(color: _color, fontSize: 14, fontWeight: FontWeight.w500),
+      ),
+    );
+  }
+}
+
+// ─── Buttons ──────────────────────────────────────────────────
 
 class _CircleBtn extends StatelessWidget {
   final IconData icon;
   final String label;
+  final bool enabled;
   final VoidCallback onTap;
 
-  const _CircleBtn({required this.icon, required this.label, required this.onTap});
+  const _CircleBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.enabled = true,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -304,13 +390,15 @@ class _CircleBtn extends StatelessWidget {
             width: 62,
             height: 62,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.15),
+              color: Colors.white.withValues(alpha: enabled ? 0.15 : 0.06),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: Colors.white, size: 26),
+            child: Icon(icon, color: enabled ? Colors.white : Colors.white30, size: 26),
           ),
           const SizedBox(height: 8),
-          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          Text(label,
+              style: TextStyle(
+                  color: enabled ? Colors.white70 : Colors.white30, fontSize: 12)),
         ],
       ),
     );
@@ -319,7 +407,6 @@ class _CircleBtn extends StatelessWidget {
 
 class _HangupBtn extends StatelessWidget {
   final VoidCallback onTap;
-
   const _HangupBtn({required this.onTap});
 
   @override

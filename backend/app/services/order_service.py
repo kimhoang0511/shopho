@@ -16,7 +16,7 @@ from app.models.order import Order, OrderImage, OrderStatus, ShipLocationType, V
 from app.models.user import DeviceToken, ShipperAlert, User
 from app.core.fcm import send_push
 from app.schemas.order import OrderCreate, OrderListItem, OrderResponse
-from app.services.gold_service import GoldError, adjust_gold_for_order_edit, bonus_gold_on_completion, dispute_gold, lock_gold_for_order, partial_refund_on_delivery, reduce_gold_in_delivery, refund_creator, refund_creator_on_accepted_cancel, refund_creator_on_shipper_cancel, reward_shipper
+from app.services.gold_service import GoldError, adjust_gold_for_order_edit, bonus_gold_on_completion, dispute_gold, lock_gold_for_order, lock_gold_for_renew, partial_refund_on_delivery, reduce_gold_in_delivery, refund_creator, refund_creator_on_accepted_cancel, refund_creator_on_shipper_cancel, reward_shipper
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ async def create_order(
         gold_reward=data.gold_reward,
         ship_apartment_id=creator.apartment_id,
         ship_location=data.ship_location,
-        ship_building=data.ship_building or creator.apt_building,
+        ship_building=data.ship_building,
         ship_floor=data.ship_floor,
         ship_room=data.ship_room,
         validity_option=data.validity_option,
@@ -173,7 +173,7 @@ async def create_order(
 
     # Lock gold from creator – raises GoldError if insufficient funds
     try:
-        await lock_gold_for_order(db, creator.id, order.id, data.gold_reward)
+        await lock_gold_for_order(db, creator.id, order.id, data.gold_reward, order_note=data.note)
     except GoldError as e:
         raise OrderError(e.detail, e.status_code)
 
@@ -285,7 +285,7 @@ async def update_order(
 
     if gold_reward != float(order.gold_reward):
         try:
-            await adjust_gold_for_order_edit(db, user.id, order.id, float(order.gold_reward), gold_reward)
+            await adjust_gold_for_order_edit(db, user.id, order.id, float(order.gold_reward), gold_reward, order_note=order.note)
         except GoldError as e:
             raise OrderError(e.detail, e.status_code)
         order.gold_reward = gold_reward
@@ -373,7 +373,7 @@ async def shipper_confirm_delivery(
         if adjusted_gold < original:
             diff = original - adjusted_gold
             try:
-                await partial_refund_on_delivery(db, order.creator_id, order.id, diff)
+                await partial_refund_on_delivery(db, order.creator_id, order.id, diff, order_note=order.note)
             except GoldError as e:
                 raise OrderError(e.detail, e.status_code)
             order.gold_reward = adjusted_gold
@@ -412,7 +412,7 @@ async def shipper_reduce_gold(
 
     diff = current - new_gold
     try:
-        await reduce_gold_in_delivery(db, order.creator_id, order.id, diff, new_gold)
+        await reduce_gold_in_delivery(db, order.creator_id, order.id, diff, new_gold, order_note=order.note)
     except GoldError as e:
         raise OrderError(e.detail, e.status_code)
 
@@ -451,7 +451,7 @@ async def shipper_cancel_order(db: AsyncSession, shipper: User, order_id: uuid.U
         order.status = OrderStatus.cancelled
         order.cancelled_at = now
         # Refund gold back to creator (gold was locked but never paid to shipper)
-        await refund_creator_on_shipper_cancel(db, order.creator_id, order.id, float(order.gold_reward))
+        await refund_creator_on_shipper_cancel(db, order.creator_id, order.id, float(order.gold_reward), order_note=order.note)
         await db.flush()
         await publish_event("order_cancelled", {"order_id": str(order.id)})
 
@@ -483,9 +483,9 @@ async def complete_order(
 
     # Release locked gold to shipper
     try:
-        await reward_shipper(db, order.shipper_id, order.id, float(order.gold_reward))
+        await reward_shipper(db, order.shipper_id, order.id, float(order.gold_reward), order_note=order.note)
         if bonus_gold and bonus_gold > 0:
-            await bonus_gold_on_completion(db, user.id, order.shipper_id, order.id, bonus_gold)
+            await bonus_gold_on_completion(db, user.id, order.shipper_id, order.id, bonus_gold, order_note=order.note)
             order.gold_reward = float(order.gold_reward) + bonus_gold
     except GoldError as e:
         raise OrderError(e.detail, e.status_code)
@@ -514,7 +514,7 @@ async def dispute_order(db: AsyncSession, user: User, order_id: uuid.UUID) -> Or
     order.completed_at = datetime.now(timezone.utc)
 
     try:
-        await dispute_gold(db, order.creator_id, order.shipper_id, order.id, float(order.gold_reward))
+        await dispute_gold(db, order.creator_id, order.shipper_id, order.id, float(order.gold_reward), order_note=order.note)
     except GoldError as e:
         raise OrderError(e.detail, e.status_code)
 
@@ -543,7 +543,7 @@ async def cancel_order(db: AsyncSession, user: User, order_id: uuid.UUID) -> Ord
     if order.status == OrderStatus.pending:
         order.status = OrderStatus.cancelled
         order.cancelled_at = now
-        await refund_creator(db, order.creator_id, order.id, float(order.gold_reward))
+        await refund_creator(db, order.creator_id, order.id, float(order.gold_reward), order_note=order.note)
 
     elif order.status == OrderStatus.accepted:
         # Allow creator to cancel within 10 minutes of acceptance
@@ -552,7 +552,7 @@ async def cancel_order(db: AsyncSession, user: User, order_id: uuid.UUID) -> Ord
         shipper_id = order.shipper_id
         order.status = OrderStatus.cancelled
         order.cancelled_at = now
-        await refund_creator_on_accepted_cancel(db, order.creator_id, order.id, float(order.gold_reward))
+        await refund_creator_on_accepted_cancel(db, order.creator_id, order.id, float(order.gold_reward), order_note=order.note)
 
     else:
         raise OrderError("Không thể huỷ đơn ở trạng thái hiện tại", 400)
@@ -639,6 +639,37 @@ async def list_proposals(
     return list(result.scalars().all())
 
 
+# ─── RENEW (creator re-activates expired order) ──────────────
+
+async def renew_order(
+    db: AsyncSession,
+    user: User,
+    order_id: uuid.UUID,
+) -> Order:
+    order = await db.scalar(
+        select(Order).where(Order.id == order_id).with_for_update()
+    )
+    if not order:
+        raise OrderError("Đơn không tồn tại", 404)
+    if order.creator_id != user.id:
+        raise OrderError("Chỉ người tạo đơn mới có thể đặt lại", 403)
+    if order.status != OrderStatus.expired:
+        raise OrderError("Chỉ có thể đặt lại đơn đã hết hạn", 400)
+
+    previous_expires_at = order.expires_at
+    try:
+        await lock_gold_for_renew(db, user.id, order.id, float(order.gold_reward), previous_expires_at, order_note=order.note)
+    except GoldError as e:
+        raise OrderError(e.detail, e.status_code)
+
+    order.status = OrderStatus.pending
+    order.expires_at = _calc_expires(order.validity_option)
+    await db.flush()
+    await _invalidate_order_cache()
+    await publish_event("order_renewed", {"order_id": str(order.id)})
+    return await _get_order_or_404(db, order.id)
+
+
 async def accept_gold_proposal(
     db: AsyncSession,
     user: User,
@@ -671,7 +702,10 @@ async def accept_gold_proposal(
     new_gold = float(proposal.proposed_gold)
     proposer_id = proposal.proposer_id  # capture before bulk-delete below
 
-    await adjust_gold_for_order_edit(db, user.id, order_id, old_gold, new_gold)
+    try:
+        await adjust_gold_for_order_edit(db, user.id, order_id, old_gold, new_gold, order_note=order.note)
+    except GoldError as e:
+        raise OrderError(e.detail, e.status_code)
     order.gold_reward = new_gold
 
     await db.execute(delete(GoldProposal).where(GoldProposal.order_id == order_id))

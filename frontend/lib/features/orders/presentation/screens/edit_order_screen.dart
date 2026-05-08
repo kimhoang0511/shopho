@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../../core/api/api_client.dart';
 import '../../data/orders_repository.dart';
 import '../../domain/order_model.dart';
 
@@ -123,7 +124,7 @@ class _EditFormState extends ConsumerState<_EditForm> {
         Navigator.pop(context, true);
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Cập nhật thất bại';
+      final msg = extractApiError(e, 'Cập nhật thất bại');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),
@@ -132,7 +133,7 @@ class _EditFormState extends ConsumerState<_EditForm> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red),
+          const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red),
         );
       }
     } finally {

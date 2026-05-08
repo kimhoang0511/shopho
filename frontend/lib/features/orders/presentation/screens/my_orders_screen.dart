@@ -228,7 +228,16 @@ class _MyShippedOrdersScreenState extends ConsumerState<MyShippedOrdersScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFECF0FF),
-      appBar: AppBar(title: const Text('Đơn đã tiếp nhận')),
+      appBar: AppBar(
+        title: const Text('Đơn đã tiếp nhận'),
+        leading: BackButton(onPressed: () {
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go('/home');
+          }
+        }),
+      ),
       body: Column(
         children: [
           // Status filter chips

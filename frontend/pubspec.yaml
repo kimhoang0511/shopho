@@ -37,8 +37,9 @@ dependencies:
   flutter_local_notifications: ^18.0.0
   flutter_callkit_incoming: ^2.4.0
   permission_handler: ^11.0.1
-  flutter_sound: ^9.2.13
-  audio_session: ^0.1.21
+  livekit_client: ^2.3.5
+
+  package_info_plus: ^8.0.0
 
   # Utils
   freezed_annotation: ^2.4.1

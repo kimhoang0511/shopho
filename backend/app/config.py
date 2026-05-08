@@ -29,9 +29,29 @@ class Settings(BaseSettings):
     app_env: str = "development"
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # LiveKit
+    livekit_url: str = ""
+    livekit_api_key: str = ""
+    livekit_api_secret: str = ""
+
+    # APNs VoIP Push (iOS)
+    apns_key_id: str = ""
+    apns_team_id: str = ""
+    apns_bundle_id: str = ""
+    apns_key_path: str = "backend/apns-key.p8"
+
     # Admin
     admin_username: str = "admin"
     admin_password: str = "Admin@2026"
+
+    # Contact
+    zalo_contact: str = ""
+
+    # Version gate
+    app_min_version: str = "1.0.0"      # below this → force update
+    app_latest_version: str = "1.0.0"   # below this → soft update suggestion
+    android_store_url: str = ""
+    ios_store_url: str = ""
 
 
 @lru_cache

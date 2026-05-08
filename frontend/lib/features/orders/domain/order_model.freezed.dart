@@ -672,6 +672,230 @@ abstract class _OrderListItem implements OrderListItem {
       throw _privateConstructorUsedError;
 }
 
+OrderUserInfo _$OrderUserInfoFromJson(Map<String, dynamic> json) {
+  return _OrderUserInfo.fromJson(json);
+}
+
+/// @nodoc
+mixin _$OrderUserInfo {
+  String get id => throw _privateConstructorUsedError;
+  String get username => throw _privateConstructorUsedError;
+  @JsonKey(name: 'display_name')
+  String? get displayName => throw _privateConstructorUsedError;
+  @JsonKey(name: 'avatar_url')
+  String? get avatarUrl => throw _privateConstructorUsedError;
+
+  /// Serializes this OrderUserInfo to a JSON map.
+  Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
+
+  /// Create a copy of OrderUserInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  $OrderUserInfoCopyWith<OrderUserInfo> get copyWith =>
+      throw _privateConstructorUsedError;
+}
+
+/// @nodoc
+abstract class $OrderUserInfoCopyWith<$Res> {
+  factory $OrderUserInfoCopyWith(
+          OrderUserInfo value, $Res Function(OrderUserInfo) then) =
+      _$OrderUserInfoCopyWithImpl<$Res, OrderUserInfo>;
+  @useResult
+  $Res call(
+      {String id,
+      String username,
+      @JsonKey(name: 'display_name') String? displayName,
+      @JsonKey(name: 'avatar_url') String? avatarUrl});
+}
+
+/// @nodoc
+class _$OrderUserInfoCopyWithImpl<$Res, $Val extends OrderUserInfo>
+    implements $OrderUserInfoCopyWith<$Res> {
+  _$OrderUserInfoCopyWithImpl(this._value, this._then);
+
+  // ignore: unused_field
+  final $Val _value;
+  // ignore: unused_field
+  final $Res Function($Val) _then;
+
+  /// Create a copy of OrderUserInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? id = null,
+    Object? username = null,
+    Object? displayName = freezed,
+    Object? avatarUrl = freezed,
+  }) {
+    return _then(_value.copyWith(
+      id: null == id
+          ? _value.id
+          : id // ignore: cast_nullable_to_non_nullable
+              as String,
+      username: null == username
+          ? _value.username
+          : username // ignore: cast_nullable_to_non_nullable
+              as String,
+      displayName: freezed == displayName
+          ? _value.displayName
+          : displayName // ignore: cast_nullable_to_non_nullable
+              as String?,
+      avatarUrl: freezed == avatarUrl
+          ? _value.avatarUrl
+          : avatarUrl // ignore: cast_nullable_to_non_nullable
+              as String?,
+    ) as $Val);
+  }
+}
+
+/// @nodoc
+abstract class _$$OrderUserInfoImplCopyWith<$Res>
+    implements $OrderUserInfoCopyWith<$Res> {
+  factory _$$OrderUserInfoImplCopyWith(
+          _$OrderUserInfoImpl value, $Res Function(_$OrderUserInfoImpl) then) =
+      __$$OrderUserInfoImplCopyWithImpl<$Res>;
+  @override
+  @useResult
+  $Res call(
+      {String id,
+      String username,
+      @JsonKey(name: 'display_name') String? displayName,
+      @JsonKey(name: 'avatar_url') String? avatarUrl});
+}
+
+/// @nodoc
+class __$$OrderUserInfoImplCopyWithImpl<$Res>
+    extends _$OrderUserInfoCopyWithImpl<$Res, _$OrderUserInfoImpl>
+    implements _$$OrderUserInfoImplCopyWith<$Res> {
+  __$$OrderUserInfoImplCopyWithImpl(
+      _$OrderUserInfoImpl _value, $Res Function(_$OrderUserInfoImpl) _then)
+      : super(_value, _then);
+
+  /// Create a copy of OrderUserInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  @override
+  $Res call({
+    Object? id = null,
+    Object? username = null,
+    Object? displayName = freezed,
+    Object? avatarUrl = freezed,
+  }) {
+    return _then(_$OrderUserInfoImpl(
+      id: null == id
+          ? _value.id
+          : id // ignore: cast_nullable_to_non_nullable
+              as String,
+      username: null == username
+          ? _value.username
+          : username // ignore: cast_nullable_to_non_nullable
+              as String,
+      displayName: freezed == displayName
+          ? _value.displayName
+          : displayName // ignore: cast_nullable_to_non_nullable
+              as String?,
+      avatarUrl: freezed == avatarUrl
+          ? _value.avatarUrl
+          : avatarUrl // ignore: cast_nullable_to_non_nullable
+              as String?,
+    ));
+  }
+}
+
+/// @nodoc
+@JsonSerializable()
+class _$OrderUserInfoImpl implements _OrderUserInfo {
+  const _$OrderUserInfoImpl(
+      {required this.id,
+      required this.username,
+      @JsonKey(name: 'display_name') this.displayName,
+      @JsonKey(name: 'avatar_url') this.avatarUrl});
+
+  factory _$OrderUserInfoImpl.fromJson(Map<String, dynamic> json) =>
+      _$$OrderUserInfoImplFromJson(json);
+
+  @override
+  final String id;
+  @override
+  final String username;
+  @override
+  @JsonKey(name: 'display_name')
+  final String? displayName;
+  @override
+  @JsonKey(name: 'avatar_url')
+  final String? avatarUrl;
+
+  @override
+  String toString() {
+    return 'OrderUserInfo(id: $id, username: $username, displayName: $displayName, avatarUrl: $avatarUrl)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is _$OrderUserInfoImpl &&
+            (identical(other.id, id) || other.id == id) &&
+            (identical(other.username, username) ||
+                other.username == username) &&
+            (identical(other.displayName, displayName) ||
+                other.displayName == displayName) &&
+            (identical(other.avatarUrl, avatarUrl) ||
+                other.avatarUrl == avatarUrl));
+  }
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  int get hashCode =>
+      Object.hash(runtimeType, id, username, displayName, avatarUrl);
+
+  /// Create a copy of OrderUserInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @override
+  @pragma('vm:prefer-inline')
+  _$$OrderUserInfoImplCopyWith<_$OrderUserInfoImpl> get copyWith =>
+      __$$OrderUserInfoImplCopyWithImpl<_$OrderUserInfoImpl>(this, _$identity);
+
+  @override
+  Map<String, dynamic> toJson() {
+    return _$$OrderUserInfoImplToJson(
+      this,
+    );
+  }
+}
+
+abstract class _OrderUserInfo implements OrderUserInfo {
+  const factory _OrderUserInfo(
+          {required final String id,
+          required final String username,
+          @JsonKey(name: 'display_name') final String? displayName,
+          @JsonKey(name: 'avatar_url') final String? avatarUrl}) =
+      _$OrderUserInfoImpl;
+
+  factory _OrderUserInfo.fromJson(Map<String, dynamic> json) =
+      _$OrderUserInfoImpl.fromJson;
+
+  @override
+  String get id;
+  @override
+  String get username;
+  @override
+  @JsonKey(name: 'display_name')
+  String? get displayName;
+  @override
+  @JsonKey(name: 'avatar_url')
+  String? get avatarUrl;
+
+  /// Create a copy of OrderUserInfo
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  _$$OrderUserInfoImplCopyWith<_$OrderUserInfoImpl> get copyWith =>
+      throw _privateConstructorUsedError;
+}
+
 OrderDetail _$OrderDetailFromJson(Map<String, dynamic> json) {
   return _OrderDetail.fromJson(json);
 }
@@ -703,6 +927,8 @@ mixin _$OrderDetail {
   DateTime get createdAt => throw _privateConstructorUsedError;
   @JsonKey(name: 'accepted_at')
   DateTime? get acceptedAt => throw _privateConstructorUsedError;
+  @JsonKey(name: 'delivering_at')
+  DateTime? get deliveringAt => throw _privateConstructorUsedError;
   @JsonKey(name: 'completed_at')
   DateTime? get completedAt => throw _privateConstructorUsedError;
   List<OrderImage> get images => throw _privateConstructorUsedError;
@@ -714,6 +940,8 @@ mixin _$OrderDetail {
   DateTime? get estimatedDeliveryAt => throw _privateConstructorUsedError;
   @JsonKey(name: 'min_proposed_gold')
   double? get minProposedGold => throw _privateConstructorUsedError;
+  OrderUserInfo? get creator => throw _privateConstructorUsedError;
+  OrderUserInfo? get shipper => throw _privateConstructorUsedError;
 
   /// Serializes this OrderDetail to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -746,12 +974,18 @@ abstract class $OrderDetailCopyWith<$Res> {
       OrderStatus status,
       @JsonKey(name: 'created_at') DateTime createdAt,
       @JsonKey(name: 'accepted_at') DateTime? acceptedAt,
+      @JsonKey(name: 'delivering_at') DateTime? deliveringAt,
       @JsonKey(name: 'completed_at') DateTime? completedAt,
       List<OrderImage> images,
       @JsonKey(name: 'ship_apartment_name') String? shipApartmentName,
       @JsonKey(name: 'estimated_minutes') int? estimatedMinutes,
       @JsonKey(name: 'estimated_delivery_at') DateTime? estimatedDeliveryAt,
-      @JsonKey(name: 'min_proposed_gold') double? minProposedGold});
+      @JsonKey(name: 'min_proposed_gold') double? minProposedGold,
+      OrderUserInfo? creator,
+      OrderUserInfo? shipper});
+
+  $OrderUserInfoCopyWith<$Res>? get creator;
+  $OrderUserInfoCopyWith<$Res>? get shipper;
 }
 
 /// @nodoc
@@ -783,12 +1017,15 @@ class _$OrderDetailCopyWithImpl<$Res, $Val extends OrderDetail>
     Object? status = null,
     Object? createdAt = null,
     Object? acceptedAt = freezed,
+    Object? deliveringAt = freezed,
     Object? completedAt = freezed,
     Object? images = null,
     Object? shipApartmentName = freezed,
     Object? estimatedMinutes = freezed,
     Object? estimatedDeliveryAt = freezed,
     Object? minProposedGold = freezed,
+    Object? creator = freezed,
+    Object? shipper = freezed,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -847,6 +1084,10 @@ class _$OrderDetailCopyWithImpl<$Res, $Val extends OrderDetail>
           ? _value.acceptedAt
           : acceptedAt // ignore: cast_nullable_to_non_nullable
               as DateTime?,
+      deliveringAt: freezed == deliveringAt
+          ? _value.deliveringAt
+          : deliveringAt // ignore: cast_nullable_to_non_nullable
+              as DateTime?,
       completedAt: freezed == completedAt
           ? _value.completedAt
           : completedAt // ignore: cast_nullable_to_non_nullable
@@ -871,7 +1112,43 @@ class _$OrderDetailCopyWithImpl<$Res, $Val extends OrderDetail>
           ? _value.minProposedGold
           : minProposedGold // ignore: cast_nullable_to_non_nullable
               as double?,
+      creator: freezed == creator
+          ? _value.creator
+          : creator // ignore: cast_nullable_to_non_nullable
+              as OrderUserInfo?,
+      shipper: freezed == shipper
+          ? _value.shipper
+          : shipper // ignore: cast_nullable_to_non_nullable
+              as OrderUserInfo?,
     ) as $Val);
+  }
+
+  /// Create a copy of OrderDetail
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $OrderUserInfoCopyWith<$Res>? get creator {
+    if (_value.creator == null) {
+      return null;
+    }
+
+    return $OrderUserInfoCopyWith<$Res>(_value.creator!, (value) {
+      return _then(_value.copyWith(creator: value) as $Val);
+    });
+  }
+
+  /// Create a copy of OrderDetail
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $OrderUserInfoCopyWith<$Res>? get shipper {
+    if (_value.shipper == null) {
+      return null;
+    }
+
+    return $OrderUserInfoCopyWith<$Res>(_value.shipper!, (value) {
+      return _then(_value.copyWith(shipper: value) as $Val);
+    });
   }
 }
 
@@ -898,12 +1175,20 @@ abstract class _$$OrderDetailImplCopyWith<$Res>
       OrderStatus status,
       @JsonKey(name: 'created_at') DateTime createdAt,
       @JsonKey(name: 'accepted_at') DateTime? acceptedAt,
+      @JsonKey(name: 'delivering_at') DateTime? deliveringAt,
       @JsonKey(name: 'completed_at') DateTime? completedAt,
       List<OrderImage> images,
       @JsonKey(name: 'ship_apartment_name') String? shipApartmentName,
       @JsonKey(name: 'estimated_minutes') int? estimatedMinutes,
       @JsonKey(name: 'estimated_delivery_at') DateTime? estimatedDeliveryAt,
-      @JsonKey(name: 'min_proposed_gold') double? minProposedGold});
+      @JsonKey(name: 'min_proposed_gold') double? minProposedGold,
+      OrderUserInfo? creator,
+      OrderUserInfo? shipper});
+
+  @override
+  $OrderUserInfoCopyWith<$Res>? get creator;
+  @override
+  $OrderUserInfoCopyWith<$Res>? get shipper;
 }
 
 /// @nodoc
@@ -933,12 +1218,15 @@ class __$$OrderDetailImplCopyWithImpl<$Res>
     Object? status = null,
     Object? createdAt = null,
     Object? acceptedAt = freezed,
+    Object? deliveringAt = freezed,
     Object? completedAt = freezed,
     Object? images = null,
     Object? shipApartmentName = freezed,
     Object? estimatedMinutes = freezed,
     Object? estimatedDeliveryAt = freezed,
     Object? minProposedGold = freezed,
+    Object? creator = freezed,
+    Object? shipper = freezed,
   }) {
     return _then(_$OrderDetailImpl(
       id: null == id
@@ -997,6 +1285,10 @@ class __$$OrderDetailImplCopyWithImpl<$Res>
           ? _value.acceptedAt
           : acceptedAt // ignore: cast_nullable_to_non_nullable
               as DateTime?,
+      deliveringAt: freezed == deliveringAt
+          ? _value.deliveringAt
+          : deliveringAt // ignore: cast_nullable_to_non_nullable
+              as DateTime?,
       completedAt: freezed == completedAt
           ? _value.completedAt
           : completedAt // ignore: cast_nullable_to_non_nullable
@@ -1021,6 +1313,14 @@ class __$$OrderDetailImplCopyWithImpl<$Res>
           ? _value.minProposedGold
           : minProposedGold // ignore: cast_nullable_to_non_nullable
               as double?,
+      creator: freezed == creator
+          ? _value.creator
+          : creator // ignore: cast_nullable_to_non_nullable
+              as OrderUserInfo?,
+      shipper: freezed == shipper
+          ? _value.shipper
+          : shipper // ignore: cast_nullable_to_non_nullable
+              as OrderUserInfo?,
     ));
   }
 }
@@ -1043,12 +1343,15 @@ class _$OrderDetailImpl implements _OrderDetail {
       required this.status,
       @JsonKey(name: 'created_at') required this.createdAt,
       @JsonKey(name: 'accepted_at') this.acceptedAt,
+      @JsonKey(name: 'delivering_at') this.deliveringAt,
       @JsonKey(name: 'completed_at') this.completedAt,
       required final List<OrderImage> images,
       @JsonKey(name: 'ship_apartment_name') this.shipApartmentName,
       @JsonKey(name: 'estimated_minutes') this.estimatedMinutes,
       @JsonKey(name: 'estimated_delivery_at') this.estimatedDeliveryAt,
-      @JsonKey(name: 'min_proposed_gold') this.minProposedGold})
+      @JsonKey(name: 'min_proposed_gold') this.minProposedGold,
+      this.creator,
+      this.shipper})
       : _images = images;
 
   factory _$OrderDetailImpl.fromJson(Map<String, dynamic> json) =>
@@ -1094,6 +1397,9 @@ class _$OrderDetailImpl implements _OrderDetail {
   @JsonKey(name: 'accepted_at')
   final DateTime? acceptedAt;
   @override
+  @JsonKey(name: 'delivering_at')
+  final DateTime? deliveringAt;
+  @override
   @JsonKey(name: 'completed_at')
   final DateTime? completedAt;
   final List<OrderImage> _images;
@@ -1116,10 +1422,14 @@ class _$OrderDetailImpl implements _OrderDetail {
   @override
   @JsonKey(name: 'min_proposed_gold')
   final double? minProposedGold;
+  @override
+  final OrderUserInfo? creator;
+  @override
+  final OrderUserInfo? shipper;
 
   @override
   String toString() {
-    return 'OrderDetail(id: $id, creatorId: $creatorId, shipperId: $shipperId, note: $note, goldReward: $goldReward, shipLocation: $shipLocation, shipBuilding: $shipBuilding, shipFloor: $shipFloor, shipRoom: $shipRoom, validityOption: $validityOption, expiresAt: $expiresAt, status: $status, createdAt: $createdAt, acceptedAt: $acceptedAt, completedAt: $completedAt, images: $images, shipApartmentName: $shipApartmentName, estimatedMinutes: $estimatedMinutes, estimatedDeliveryAt: $estimatedDeliveryAt, minProposedGold: $minProposedGold)';
+    return 'OrderDetail(id: $id, creatorId: $creatorId, shipperId: $shipperId, note: $note, goldReward: $goldReward, shipLocation: $shipLocation, shipBuilding: $shipBuilding, shipFloor: $shipFloor, shipRoom: $shipRoom, validityOption: $validityOption, expiresAt: $expiresAt, status: $status, createdAt: $createdAt, acceptedAt: $acceptedAt, deliveringAt: $deliveringAt, completedAt: $completedAt, images: $images, shipApartmentName: $shipApartmentName, estimatedMinutes: $estimatedMinutes, estimatedDeliveryAt: $estimatedDeliveryAt, minProposedGold: $minProposedGold, creator: $creator, shipper: $shipper)';
   }
 
   @override
@@ -1152,6 +1462,8 @@ class _$OrderDetailImpl implements _OrderDetail {
                 other.createdAt == createdAt) &&
             (identical(other.acceptedAt, acceptedAt) ||
                 other.acceptedAt == acceptedAt) &&
+            (identical(other.deliveringAt, deliveringAt) ||
+                other.deliveringAt == deliveringAt) &&
             (identical(other.completedAt, completedAt) ||
                 other.completedAt == completedAt) &&
             const DeepCollectionEquality().equals(other._images, _images) &&
@@ -1162,7 +1474,9 @@ class _$OrderDetailImpl implements _OrderDetail {
             (identical(other.estimatedDeliveryAt, estimatedDeliveryAt) ||
                 other.estimatedDeliveryAt == estimatedDeliveryAt) &&
             (identical(other.minProposedGold, minProposedGold) ||
-                other.minProposedGold == minProposedGold));
+                other.minProposedGold == minProposedGold) &&
+            (identical(other.creator, creator) || other.creator == creator) &&
+            (identical(other.shipper, shipper) || other.shipper == shipper));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1183,12 +1497,15 @@ class _$OrderDetailImpl implements _OrderDetail {
         status,
         createdAt,
         acceptedAt,
+        deliveringAt,
         completedAt,
         const DeepCollectionEquality().hash(_images),
         shipApartmentName,
         estimatedMinutes,
         estimatedDeliveryAt,
-        minProposedGold
+        minProposedGold,
+        creator,
+        shipper
       ]);
 
   /// Create a copy of OrderDetail
@@ -1224,14 +1541,16 @@ abstract class _OrderDetail implements OrderDetail {
       required final OrderStatus status,
       @JsonKey(name: 'created_at') required final DateTime createdAt,
       @JsonKey(name: 'accepted_at') final DateTime? acceptedAt,
+      @JsonKey(name: 'delivering_at') final DateTime? deliveringAt,
       @JsonKey(name: 'completed_at') final DateTime? completedAt,
       required final List<OrderImage> images,
       @JsonKey(name: 'ship_apartment_name') final String? shipApartmentName,
       @JsonKey(name: 'estimated_minutes') final int? estimatedMinutes,
       @JsonKey(name: 'estimated_delivery_at')
       final DateTime? estimatedDeliveryAt,
-      @JsonKey(name: 'min_proposed_gold')
-      final double? minProposedGold}) = _$OrderDetailImpl;
+      @JsonKey(name: 'min_proposed_gold') final double? minProposedGold,
+      final OrderUserInfo? creator,
+      final OrderUserInfo? shipper}) = _$OrderDetailImpl;
 
   factory _OrderDetail.fromJson(Map<String, dynamic> json) =
       _$OrderDetailImpl.fromJson;
@@ -1276,6 +1595,9 @@ abstract class _OrderDetail implements OrderDetail {
   @JsonKey(name: 'accepted_at')
   DateTime? get acceptedAt;
   @override
+  @JsonKey(name: 'delivering_at')
+  DateTime? get deliveringAt;
+  @override
   @JsonKey(name: 'completed_at')
   DateTime? get completedAt;
   @override
@@ -1292,6 +1614,10 @@ abstract class _OrderDetail implements OrderDetail {
   @override
   @JsonKey(name: 'min_proposed_gold')
   double? get minProposedGold;
+  @override
+  OrderUserInfo? get creator;
+  @override
+  OrderUserInfo? get shipper;
 
   /// Create a copy of OrderDetail
   /// with the given fields replaced by the non-null parameter values.

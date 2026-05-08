@@ -63,6 +63,22 @@ const _$ShipLocationTypeEnumMap = {
   ShipLocationType.room: 'room',
 };
 
+_$OrderUserInfoImpl _$$OrderUserInfoImplFromJson(Map<String, dynamic> json) =>
+    _$OrderUserInfoImpl(
+      id: json['id'] as String,
+      username: json['username'] as String,
+      displayName: json['display_name'] as String?,
+      avatarUrl: json['avatar_url'] as String?,
+    );
+
+Map<String, dynamic> _$$OrderUserInfoImplToJson(_$OrderUserInfoImpl instance) =>
+    <String, dynamic>{
+      'id': instance.id,
+      'username': instance.username,
+      'display_name': instance.displayName,
+      'avatar_url': instance.avatarUrl,
+    };
+
 _$OrderDetailImpl _$$OrderDetailImplFromJson(Map<String, dynamic> json) =>
     _$OrderDetailImpl(
       id: json['id'] as String,
@@ -82,6 +98,9 @@ _$OrderDetailImpl _$$OrderDetailImplFromJson(Map<String, dynamic> json) =>
       acceptedAt: json['accepted_at'] == null
           ? null
           : DateTime.parse(json['accepted_at'] as String),
+      deliveringAt: json['delivering_at'] == null
+          ? null
+          : DateTime.parse(json['delivering_at'] as String),
       completedAt: json['completed_at'] == null
           ? null
           : DateTime.parse(json['completed_at'] as String),
@@ -94,6 +113,12 @@ _$OrderDetailImpl _$$OrderDetailImplFromJson(Map<String, dynamic> json) =>
           ? null
           : DateTime.parse(json['estimated_delivery_at'] as String),
       minProposedGold: (json['min_proposed_gold'] as num?)?.toDouble(),
+      creator: json['creator'] == null
+          ? null
+          : OrderUserInfo.fromJson(json['creator'] as Map<String, dynamic>),
+      shipper: json['shipper'] == null
+          ? null
+          : OrderUserInfo.fromJson(json['shipper'] as Map<String, dynamic>),
     );
 
 Map<String, dynamic> _$$OrderDetailImplToJson(_$OrderDetailImpl instance) =>
@@ -112,12 +137,15 @@ Map<String, dynamic> _$$OrderDetailImplToJson(_$OrderDetailImpl instance) =>
       'status': _$OrderStatusEnumMap[instance.status]!,
       'created_at': instance.createdAt.toIso8601String(),
       'accepted_at': instance.acceptedAt?.toIso8601String(),
+      'delivering_at': instance.deliveringAt?.toIso8601String(),
       'completed_at': instance.completedAt?.toIso8601String(),
       'images': instance.images,
       'ship_apartment_name': instance.shipApartmentName,
       'estimated_minutes': instance.estimatedMinutes,
       'estimated_delivery_at': instance.estimatedDeliveryAt?.toIso8601String(),
       'min_proposed_gold': instance.minProposedGold,
+      'creator': instance.creator,
+      'shipper': instance.shipper,
     };
 
 const _$OrderStatusEnumMap = {

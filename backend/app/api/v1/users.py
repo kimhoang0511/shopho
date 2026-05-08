@@ -80,6 +80,23 @@ async def register_device_token(
     await db.commit()
 
 
+@router.delete("/me/device-token", status_code=204)
+async def unregister_device_token(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    from app.models.user import DeviceToken
+    from sqlalchemy import delete
+    token = body.get("token", "").strip()
+    if not token:
+        return
+    await db.execute(
+        delete(DeviceToken).where(DeviceToken.user_id == user.id, DeviceToken.token == token)
+    )
+    await db.commit()
+
+
 # ─── Browse-alert (notification when new order matches filter) ─
 
 class _BrowseAlertBody(BaseModel):

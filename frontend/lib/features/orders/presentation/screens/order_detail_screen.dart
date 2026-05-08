@@ -82,10 +82,17 @@ class OrderDetailScreen extends ConsumerWidget {
       backgroundColor: bgColor,
       appBar: AppBar(
         title: Text(appBarTitle),
+        leading: BackButton(onPressed: () {
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go('/home');
+          }
+        }),
         actions: [
           if (showContact)
             IconButton(
-              icon: const Icon(Icons.phone),
+              icon: Transform.scale(scaleX: -1, child: const Icon(Icons.phone)),
               tooltip: 'Gọi điện',
               onPressed: () => _callContact(context, ref, orderId),
             ),
@@ -106,8 +113,7 @@ class OrderDetailScreen extends ConsumerWidget {
       final res = await ref.read(apiClientProvider).dio.get('/orders/$orderId/contact');
       contact = res.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null)
-          ?? 'Không thể tải thông tin liên hệ';
+      final msg = extractApiError(e, 'Không thể tải thông tin liên hệ');
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),
@@ -162,20 +168,26 @@ class OrderDetailScreen extends ConsumerWidget {
                     }
                     return;
                   }
-                  // Notify backend → FCM to recipient
+                  // Initiate call → backend sends FCM to recipient + returns caller token
                   try {
                     final res = await dio.post('/orders/$orderId/call');
-                    final counterpartName =
-                        res.data['counterpart_name'] as String? ?? 'Đối phương';
+                    final counterpartName = res.data['counterpart_name'] as String? ?? 'Đối phương';
+                    final livekitUrl = res.data['livekit_url'] as String? ?? '';
+                    final token = res.data['token'] as String? ?? '';
+                    final callId = res.data['call_id'] as String? ?? '';
                     if (context.mounted) {
                       context.push(
                         '/call/$orderId',
-                        extra: {'name': counterpartName, 'isCaller': true},
+                        extra: {
+                          'name': counterpartName,
+                          'livekit_url': livekitUrl,
+                          'token': token,
+                          'call_id': callId,
+                        },
                       );
                     }
                   } on DioException catch (e) {
-                    final msg = (e.response?.data is Map ? e.response?.data['detail'] : null)
-                        ?? 'Không thể thực hiện cuộc gọi';
+                    final msg = extractApiError(e, 'Không thể thực hiện cuộc gọi');
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),
@@ -226,6 +238,7 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
   bool _reducingGold = false;
   bool _disputing = false;
   bool _proposing = false;
+  bool _renewing = false;
 
   // Safe pop: when opened from notification (_router.go) the stack is empty,
   // Navigator.pop would cause a black screen — fall back to home instead.
@@ -258,10 +271,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
             backgroundColor: Colors.green,
           ),
         );
-        _safeBack();
+        context.go('/orders/my-shipped');
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Nhận đơn thất bại';
+      final msg = extractApiError(e, 'Nhận đơn thất bại');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),
@@ -270,7 +283,7 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red),
+          const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -308,10 +321,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         _safeBack();
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Huỷ đơn thất bại';
+      final msg = extractApiError(e, 'Huỷ đơn thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
     }
   }
 
@@ -342,10 +355,46 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         _safeBack();
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Huỷ đơn thất bại';
+      final msg = extractApiError(e, 'Huỷ đơn thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
+    }
+  }
+
+  Future<void> _renewOrder() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Đặt lại đơn'),
+        content: const Text('Đơn sẽ được kích hoạt lại với cùng nội dung và thời hạn ban đầu.\nGold sẽ được khoá lại từ số dư của bạn.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Huỷ')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Đặt lại'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _renewing = true);
+    try {
+      await ref.read(ordersRepositoryProvider).renewOrder(widget.order.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã đặt lại đơn thành công!'), backgroundColor: Colors.green),
+        );
+        _safeBack();
+      }
+    } on DioException catch (e) {
+      final msg = extractApiError(e, 'Đặt lại thất bại');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
+    } finally {
+      if (mounted) setState(() => _renewing = false);
     }
   }
 
@@ -369,10 +418,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         _safeBack();
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Thao tác thất bại';
+      final msg = extractApiError(e, 'Thao tác thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _completing = false);
     }
@@ -411,17 +460,19 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         _safeBack();
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Thao tác thất bại';
+      final msg = extractApiError(e, 'Thao tác thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _delivering = false);
     }
   }
 
   Future<void> _disputeOrder() async {
-    final halfGold = (widget.order.goldReward / 2).toStringAsFixed(0);
+    final total = widget.order.goldReward.toInt();
+    final shipperGold = total ~/ 2;
+    final creatorGold = total - shipperGold;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -430,8 +481,8 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
           'Đang có xung đột giữa 2 bên.\n\n'
           'Bạn nên chủ động liên hệ với người mua/ship hộ để giải quyết trước.\n\n'
           'Nếu không thể giải quyết và xác nhận trạng thái "xung đột", '
-          'số gold chi trả cho người mua/ship hộ sẽ chỉ còn 1/2 (${halfGold} Gold) '
-          'so với mức ban đầu, phần còn lại sẽ được hoàn trả cho bạn.',
+          'người mua/ship hộ sẽ nhận $shipperGold Gold, '
+          'bạn sẽ được hoàn lại $creatorGold Gold.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Quay lại giải quyết')),
@@ -458,10 +509,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         _safeBack();
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Thao tác thất bại';
+      final msg = extractApiError(e, 'Thao tác thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _disputing = false);
     }
@@ -489,10 +540,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         _safeBack();
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Thao tác thất bại';
+      final msg = extractApiError(e, 'Thao tác thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _reducingGold = false);
     }
@@ -532,10 +583,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         _safeBack();
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Huỷ đơn thất bại';
+      final msg = extractApiError(e, 'Huỷ đơn thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _shipperCancelling = false);
     }
@@ -560,10 +611,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
         );
       }
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Gửi đề nghị thất bại';
+      final msg = extractApiError(e, 'Gửi đề nghị thất bại');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red));
     } finally {
       if (mounted) setState(() => _proposing = false);
     }
@@ -576,6 +627,7 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
     final isPending = order.status == OrderStatus.pending;
     final isAccepted = order.status == OrderStatus.accepted;
     final isDelivering = order.status == OrderStatus.delivering;
+    final isExpired = order.status == OrderStatus.expired;
     final currentUserId = ref.watch(_currentUserIdProvider).valueOrNull;
     final isShipper = currentUserId != null && order.shipperId == currentUserId;
     final isCreator = currentUserId != null && order.creatorId == currentUserId;
@@ -620,6 +672,10 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
               ),
               const SizedBox(height: 12),
 
+              // Participants card
+              _ParticipantsCard(order: order),
+              const SizedBox(height: 12),
+
               // Ship address card
               _ShipAddressCard(order: order),
               const SizedBox(height: 12),
@@ -638,12 +694,27 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
                         _timerRow(order, cs),
                         const Divider(height: 24),
                       ],
+                      if (order.status == OrderStatus.delivering && order.deliveringAt != null) ...[
+                        _InfoRow(
+                          Icons.schedule_outlined,
+                          'Gold tự động chuyển lúc',
+                          _formatTime(order.deliveringAt!.add(const Duration(hours: 1)).toLocal()),
+                          valueStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                        ),
+                        const Divider(height: 24),
+                      ],
                       _InfoRow(Icons.info_outline, 'Trạng thái', _statusLabel(order.status),
                           valueStyle: TextStyle(color: _statusColor(order.status), fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
               ),
+
+              // Dispute result card
+              if (order.status == OrderStatus.disputed) ...[
+                const SizedBox(height: 12),
+                _DisputeResultCard(goldReward: order.goldReward, isCreator: isCreator),
+              ],
 
               // Proposals card (creator, pending)
               if (isCreator && isPending) ...[
@@ -659,7 +730,7 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
                       ref.invalidate(_proposalsProvider(order.id));
                       if (mounted) _safeBack();
                     } on DioException catch (e) {
-                      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Thao tác thất bại';
+                      final msg = extractApiError(e, 'Thao tác thất bại');
                       if (mounted) messenger.showSnackBar(SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red));
                     }
                   },
@@ -785,6 +856,22 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
             ),
           ),
 
+        // Creator: renew expired order
+        if (isCreator && isExpired)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            child: FilledButton.icon(
+              onPressed: _renewing ? null : _renewOrder,
+              icon: _renewing
+                  ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.refresh_rounded),
+              label: Text(_renewing ? 'Đang xử lý...' : 'Đặt lại đơn'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48),
+              ),
+            ),
+          ),
+
         // Shipper actions (accepted or delivering)
         if (isShipper && (isAccepted || isDelivering))
           Padding(
@@ -859,13 +946,15 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
     }
   }
 
-  String _formatTime(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} '
-      '${dt.day}/${dt.month}/${dt.year}';
+  String _formatTime(DateTime dt) {
+    final local = dt.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} '
+        '${local.day}/${local.month}/${local.year}';
+  }
 
   String _statusLabel(OrderStatus s) => switch (s) {
     OrderStatus.pending    => 'Đang chờ',
-    OrderStatus.accepted   => 'Đã nhận',
+    OrderStatus.accepted   => 'Đã nhận - đang xử lý',
     OrderStatus.delivering => 'Đã báo giao',
     OrderStatus.completed  => 'hoàn thành',
     OrderStatus.cancelled  => 'Đã huỷ',
@@ -882,6 +971,78 @@ class _OrderDetailBodyState extends ConsumerState<_OrderDetailBody> {
     OrderStatus.expired    => Colors.grey,
     OrderStatus.disputed   => Colors.deepOrange,
   };
+}
+
+// ─── Participants card ────────────────────────────────────────
+
+class _ParticipantsCard extends StatelessWidget {
+  final OrderDetail order;
+  const _ParticipantsCard({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final creator = order.creator;
+    final shipper = order.shipper;
+    if (creator == null && shipper == null) return const SizedBox.shrink();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Thành viên', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+            const SizedBox(height: 12),
+            if (creator != null)
+              _PersonRow(
+                icon: Icons.person_outline,
+                label: 'Người đặt',
+                name: creator.name,
+                color: Colors.indigo,
+              ),
+            if (creator != null && shipper != null)
+              const Divider(height: 20),
+            if (shipper != null)
+              _PersonRow(
+                icon: Icons.delivery_dining_outlined,
+                label: 'Mua/ship hộ',
+                name: shipper.name,
+                color: Colors.green,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PersonRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String name;
+  final Color color;
+  const _PersonRow({required this.icon, required this.label, required this.name, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: color.withValues(alpha: 0.12),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 // ─── Ship address card ────────────────────────────────────────
@@ -1419,6 +1580,86 @@ class _ProposalsCard extends StatelessWidget {
 }
 
 // ─── Call option tile ─────────────────────────────────────────
+
+class _DisputeResultCard extends StatelessWidget {
+  final double goldReward;
+  final bool isCreator;
+
+  const _DisputeResultCard({required this.goldReward, required this.isCreator});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = goldReward.toInt();
+    final shipperGold = total ~/ 2;
+    final creatorGold = total - shipperGold;
+
+    return Card(
+      color: Colors.deepOrange.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.balance_outlined, color: Colors.deepOrange, size: 18),
+                const SizedBox(width: 8),
+                const Text('Kết quả xung đột',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _DisputeRow(
+              label: 'Người tạo đơn nhận lại',
+              gold: creatorGold,
+              highlight: isCreator,
+            ),
+            const SizedBox(height: 8),
+            _DisputeRow(
+              label: 'Người ship nhận',
+              gold: shipperGold,
+              highlight: !isCreator,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DisputeRow extends StatelessWidget {
+  final String label;
+  final int gold;
+  final bool highlight;
+
+  const _DisputeRow({required this.label, required this.gold, required this.highlight});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+        Row(
+          children: [
+            Text(
+              '$gold Gold',
+              style: TextStyle(
+                fontWeight: highlight ? FontWeight.bold : FontWeight.normal,
+                fontSize: highlight ? 15 : 13,
+                color: highlight ? Colors.deepOrange : Colors.grey.shade600,
+              ),
+            ),
+            if (highlight) ...[
+              const SizedBox(width: 4),
+              const Text('← bạn', style: TextStyle(fontSize: 11, color: Colors.deepOrange)),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
 
 class _CallOptionTile extends StatelessWidget {
   final IconData icon;

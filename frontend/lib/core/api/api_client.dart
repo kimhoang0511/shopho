@@ -7,7 +7,35 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../auth_state.dart';
 
-const _baseUrl = 'http://192.168.100.195:8000/api/v1';
+/// Extract the `detail` field from a FastAPI error response.
+/// Handles: Map, JSON-encoded String, or bare String.
+String extractApiError(DioException e, String fallback) {
+  final data = e.response?.data;
+  if (data == null) return fallback;
+
+  // Parsed JSON → Map
+  if (data is Map) {
+    final detail = data['detail'];
+    if (detail != null && detail.toString().isNotEmpty) return detail.toString();
+    return fallback;
+  }
+
+  // Unparsed JSON string (rare but happens on some platforms)
+  if (data is String && data.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(data);
+      if (decoded is Map) {
+        final detail = decoded['detail'];
+        if (detail != null && detail.toString().isNotEmpty) return detail.toString();
+      }
+    } catch (_) {}
+    return fallback;
+  }
+
+  return fallback;
+}
+
+const apiBaseUrl = 'http://192.168.100.195:8000/api/v1';
 const wsBaseUrl = 'ws://192.168.100.195:8000/api/v1';
 
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
@@ -18,7 +46,7 @@ class ApiClient {
 
   ApiClient() {
     _dio = Dio(BaseOptions(
-      baseUrl: _baseUrl,
+      baseUrl: apiBaseUrl,
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 15),
       sendTimeout: const Duration(seconds: 30),

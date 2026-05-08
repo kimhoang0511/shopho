@@ -1,6 +1,7 @@
 """Firebase Cloud Messaging helper."""
 import logging
 import os
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -29,38 +30,66 @@ def _init() -> bool:
         return False
 
 
+_INVALID_TOKEN_ERRORS = {
+    "registration-token-not-registered",
+    "invalid-registration-token",
+    "requested entity was not found",
+}
+
+
 async def send_push(
     tokens: list[str],
     title: str,
     body: str,
     data: dict | None = None,
     data_only: bool = False,
-) -> None:
-    """Send FCM push notification to a list of device tokens. Silently ignores failures.
+) -> list[str]:
+    """Send FCM push notification to a list of device tokens.
 
-    Pass data_only=True for call notifications — omits the notification block so the
-    FCM background handler runs even when the app is killed (Android). flutter_callkit_incoming
-    will show its own full-screen incoming call UI instead.
+    Returns a list of tokens that are permanently invalid and should be
+    deleted from the database. Caller is responsible for the cleanup.
     """
     if not tokens:
-        return
+        return []
     if not _init():
-        return
+        return []
     try:
         from firebase_admin import messaging
         message = messaging.MulticastMessage(
             tokens=tokens,
             notification=None if data_only else messaging.Notification(title=title, body=body),
             data={k: str(v) for k, v in (data or {}).items()},
-            android=messaging.AndroidConfig(priority="high"),
+            android=messaging.AndroidConfig(
+                priority="high",
+                # TTL=0: drop immediately if device is unreachable instead of queuing.
+                # Prevents B receiving a stale call ring minutes after A already hung up.
+                ttl=timedelta(seconds=0) if data_only else timedelta(weeks=4),
+            ),
             apns=messaging.APNSConfig(
-                headers={"apns-priority": "10"},
+                headers={
+                    "apns-priority": "10",
+                    # apns-expiration=0: same as TTL=0 — APNs drops if not deliverable now.
+                    "apns-expiration": "0" if data_only else "",
+                },
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(content_available=True),
                 ),
             ) if data_only else None,
         )
         resp = messaging.send_each_for_multicast(message)
-        logger.info("FCM sent %d/%d success", resp.success_count, len(tokens))
+        logger.info("FCM sent %d/%d success (data_only=%s)", resp.success_count, len(tokens), data_only)
+
+        stale: list[str] = []
+        for i, r in enumerate(resp.responses):
+            if not r.success:
+                err_str = str(r.exception).lower()
+                is_stale = any(e in err_str for e in _INVALID_TOKEN_ERRORS)
+                if is_stale:
+                    stale.append(tokens[i])
+                    logger.info("FCM stale token pruned: %s…", tokens[i][:12])
+                else:
+                    logger.warning("FCM token[%d] failed: %s", i, r.exception)
+        return stale
     except Exception as e:
         logger.error("FCM send failed: %s", e)
+        return []

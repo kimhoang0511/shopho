@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../../core/widgets/contact_footer.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -177,6 +178,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     onPressed: () => context.go('/login'),
                     child: const Text('Đã có tài khoản? Đăng nhập'),
                   ),
+                  const SizedBox(height: 24),
+                  const ContactFooter(),
                 ],
               ),
             ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,8 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth_state.dart';
 import '../../../../core/services/fcm_service.dart';
+import '../../../../core/services/user_event_socket.dart';
+import '../../../../core/widgets/contact_footer.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -60,10 +64,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await storage.write(key: 'refresh_token', value: res.data['refresh_token']);
       final me = await dio.get('/users/me');
       await storage.write(key: 'user_id', value: me.data['id'] as String);
-      FcmService.registerToken(dio);
+      unawaited(FcmService.registerToken(dio));
+      unawaited(UserEventSocket.connect(token));
       authTokenNotifier.value = token; // triggers GoRouter redirect → /home
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Đăng nhập thất bại';
+      final msg = extractApiError(e, 'Đăng nhập thất bại');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),
@@ -76,8 +81,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -126,6 +129,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     onPressed: () => context.push('/register'),
                     child: const Text('Chưa có tài khoản? Đăng ký ngay'),
                   ),
+                  const SizedBox(height: 24),
+                  const ContactFooter(),
                 ],
               ),
             ),

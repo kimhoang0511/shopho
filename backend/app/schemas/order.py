@@ -54,13 +54,16 @@ class ImageInfo(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ShipperInfo(BaseModel):
+class UserInfo(BaseModel):
     id: uuid.UUID
     username: str
     display_name: str | None
     avatar_url: str | None
 
     model_config = {"from_attributes": True}
+
+
+ShipperInfo = UserInfo
 
 
 class OrderListItem(BaseModel):
@@ -107,11 +110,13 @@ class OrderResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     accepted_at: datetime | None
+    delivering_at: datetime | None = None
     completed_at: datetime | None
     estimated_minutes: int | None = None
     estimated_delivery_at: datetime | None = None
     images: list[ImageInfo] = []
-    shipper: ShipperInfo | None = None
+    creator: UserInfo | None = None
+    shipper: UserInfo | None = None
     min_proposed_gold: float | None = None
 
     model_config = {"from_attributes": True}

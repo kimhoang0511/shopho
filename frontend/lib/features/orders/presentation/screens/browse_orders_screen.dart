@@ -346,9 +346,10 @@ class _BrowseOrdersScreenState extends ConsumerState<BrowseOrdersScreen> {
     final ordersAsync = (filter != null && !filter.isEmpty)
         ? ref.watch(pendingOrdersProvider(filter))
         : null;
-    // Use profile apt for summary label; fall back to empty list (shows raw ID if apt not found)
+    // For filter summary: prefer full apt list; fall back to profile apt only while loading.
+    final allApts = ref.watch(_aptListProvider).valueOrNull;
     final myApt = ref.watch(_myProfileAptProvider).valueOrNull;
-    final apts = myApt != null ? [myApt] : <_AptInfo>[];
+    final apts = allApts ?? (myApt != null ? [myApt] : <_AptInfo>[]);
 
     return Scaffold(
       backgroundColor: const Color(0xFFECF0FF),

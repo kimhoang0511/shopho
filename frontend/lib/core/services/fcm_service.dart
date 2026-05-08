@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../global_messenger.dart';
+import 'call_cancel_notifier.dart';
 import 'call_service.dart';
 
 const _channelId = 'shopho_orders';
@@ -19,13 +24,21 @@ Future<void> _backgroundHandler(RemoteMessage message) async {
       callId: message.data['call_id'] ?? '',
       callerName: message.data['caller_name'] ?? 'Người gọi',
       orderId: message.data['order_id'] ?? '',
+      livekitUrl: message.data['livekit_url'] ?? '',
+      roomName: message.data['room_name'] ?? '',
     );
+  } else if (message.data['type'] == 'call_cancel') {
+    final callId = message.data['call_id'] as String? ?? '';
+    if (callId.isNotEmpty) {
+      await FlutterCallkitIncoming.endCall(callId);
+    }
   }
 }
 
 class FcmService {
   static void Function(String orderId)? _navigate;
   static String? _pendingOrderId;
+  static StreamSubscription<String>? _tokenRefreshSub;
 
   /// If the app was launched by tapping a notification while terminated,
   /// returns the order ID to navigate to (and clears it).
@@ -100,7 +113,18 @@ class FcmService {
           callId: message.data['call_id'] ?? '',
           callerName: message.data['caller_name'] ?? 'Người gọi',
           orderId: message.data['order_id'] ?? '',
+          livekitUrl: message.data['livekit_url'] ?? '',
+          roomName: message.data['room_name'] ?? '',
         );
+        return;
+      }
+      // Cancel signal: dismiss callkit + signal active call screen
+      if (message.data['type'] == 'call_cancel') {
+        final callId = message.data['call_id'] as String? ?? '';
+        if (callId.isNotEmpty) {
+          FlutterCallkitIncoming.endCall(callId);
+          callCancelNotifier.value = callId;
+        }
         return;
       }
       final notification = message.notification;
@@ -131,26 +155,123 @@ class FcmService {
     );
   }
 
-  /// Register the device token with the backend. Call after login.
+  /// Register FCM + VoIP tokens with the backend. Call after login.
   static Future<void> registerToken(Dio dio) async {
-    try {
-      final token = await FirebaseMessaging.instance.getToken();
-      if (token == null) return;
-      await dio.post(
-        '/users/me/device-token',
-        data: {'token': token, 'platform': defaultTargetPlatform.name.toLowerCase()},
-      );
-    } catch (e) {
-      debugPrint('[FCM] registerToken error: $e');
-    }
+    CallService.registerDio(dio);
 
-    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+    // Cancel previous onTokenRefresh listener before adding a new one.
+    // Without this, every login stacks an additional listener that never gets removed.
+    await _tokenRefreshSub?.cancel();
+    _tokenRefreshSub = FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
       try {
         await dio.post(
           '/users/me/device-token',
           data: {'token': newToken, 'platform': defaultTargetPlatform.name.toLowerCase()},
         );
-      } catch (_) {}
+        debugPrint('[FCM] token refreshed and re-registered');
+      } catch (e) {
+        debugPrint('[FCM] onTokenRefresh re-register failed: $e');
+      }
     });
+
+    await _registerFcmToken(dio);
+
+    // VoIP token — iOS only (PushKit). Guarantees waking app when killed.
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      _registerVoipToken(dio);
+    }
+  }
+
+  static Future<void> _registerFcmToken(Dio dio) async {
+    try {
+      String? token = await FirebaseMessaging.instance.getToken();
+
+      // getToken() returns null if permission hasn't been granted yet — retry once.
+      if (token == null) {
+        debugPrint('[FCM] token null — requesting permission and retrying…');
+        try {
+          final settings = await FirebaseMessaging.instance
+              .requestPermission()
+              .timeout(const Duration(seconds: 10));
+          if (settings.authorizationStatus == AuthorizationStatus.authorized ||
+              settings.authorizationStatus == AuthorizationStatus.provisional) {
+            token = await FirebaseMessaging.instance.getToken();
+          } else {
+            final status = settings.authorizationStatus.name;
+            showGlobalError(
+              '[Push] Quyền thông báo bị từ chối ($status) — thiết bị sẽ không nhận được cuộc gọi hay thông báo.',
+            );
+            debugPrint('[FCM] permission denied: $status');
+            return;
+          }
+        } on TimeoutException {
+          showGlobalError('[Push] Hết thời gian chờ cấp quyền thông báo.');
+          debugPrint('[FCM] requestPermission timed out');
+          return;
+        }
+      }
+
+      if (token == null) {
+        showGlobalError('[Push] Không lấy được FCM token — thiết bị sẽ không nhận được thông báo đẩy.');
+        debugPrint('[FCM] getToken returned null after permission granted');
+        return;
+      }
+
+      final platform = defaultTargetPlatform.name.toLowerCase();
+      try {
+        await dio.post(
+          '/users/me/device-token',
+          data: {'token': token, 'platform': platform},
+        );
+        debugPrint('[FCM] token registered ok (${token.substring(0, 12)}… platform=$platform)');
+      } on DioException catch (e) {
+        final code = e.response?.statusCode;
+        final detail = e.response?.data?['detail'] ?? e.message;
+        showGlobalError('[Push] Đăng ký token thất bại (HTTP $code): $detail');
+        debugPrint('[FCM] backend register failed: $e');
+      }
+    } catch (e) {
+      // On iOS the APNs token arrives asynchronously; calling getToken() too early
+      // throws apns-token-not-set. onTokenRefresh (registered above) will fire once
+      // the token is ready, so this is safe to ignore silently.
+      if (e.toString().contains('apns-token-not-set')) {
+        debugPrint('[FCM] APNs token not ready yet — will register via onTokenRefresh');
+        return;
+      }
+      showGlobalError('[Push] Lỗi không xác định khi đăng ký thông báo đẩy: $e');
+      debugPrint('[FCM] registerToken unexpected error: $e');
+    }
+  }
+
+  static Future<void> _registerVoipToken(Dio dio) async {
+    try {
+      final voipToken = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
+      if (voipToken == null || voipToken.toString().isEmpty) return;
+      await dio.post(
+        '/users/me/device-token',
+        data: {'token': voipToken.toString(), 'platform': 'ios_voip'},
+      );
+      debugPrint('[FCM] VoIP token registered');
+    } catch (e) {
+      debugPrint('[FCM] VoIP token registration error: $e');
+    }
+  }
+
+  /// Remove the device token from backend and invalidate it on Firebase.
+  /// Call before logout so the device stops receiving push notifications.
+  static Future<void> unregisterToken(Dio dio) async {
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await dio.delete(
+          '/users/me/device-token',
+          data: {'token': token},
+        );
+      }
+      // Invalidate token so a fresh one is generated on next login
+      await FirebaseMessaging.instance.deleteToken();
+    } catch (e) {
+      debugPrint('[FCM] unregisterToken error: $e');
+    }
   }
 }

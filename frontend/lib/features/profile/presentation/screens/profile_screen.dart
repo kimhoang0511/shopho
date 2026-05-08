@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth_state.dart';
+import '../../../../core/services/fcm_service.dart';
+import '../../../../core/services/user_event_socket.dart';
 
 // ── Models ──────────────────────────────────────────────────
 
@@ -67,7 +69,7 @@ class _ProfileBody extends ConsumerWidget {
   final Map<String, dynamic> me;
   const _ProfileBody({required this.me});
 
-  Future<void> _logout(BuildContext context) async {
+  Future<void> _logout(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -84,6 +86,15 @@ class _ProfileBody extends ConsumerWidget {
       ),
     );
     if (confirmed != true) return;
+
+    // Remove device token from backend + invalidate Firebase token
+    // so this device stops receiving push notifications after logout.
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      await FcmService.unregisterToken(dio);
+    } catch (_) {}
+
+    UserEventSocket.disconnect();
     const storage = FlutterSecureStorage();
     await storage.deleteAll();
     authTokenNotifier.value = null; // triggers GoRouter redirect → /login
@@ -216,7 +227,7 @@ class _ProfileBody extends ConsumerWidget {
 
         // Logout
         OutlinedButton.icon(
-          onPressed: () => _logout(context),
+          onPressed: () => _logout(context, ref),
           icon: const Icon(Icons.logout, color: Colors.red),
           label: const Text('Đăng xuất', style: TextStyle(color: Colors.red)),
           style: OutlinedButton.styleFrom(
@@ -297,7 +308,7 @@ class _ApartmentPickerScreenState extends ConsumerState<_ApartmentPickerScreen> 
       });
       if (mounted) Navigator.pop(context, true);
     } on DioException catch (e) {
-      final msg = (e.response?.data is Map ? e.response?.data['detail'] : null) ?? 'Lưu thất bại';
+      final msg = extractApiError(e, 'Lưu thất bại');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),

@@ -2,23 +2,28 @@
 Chat feature:
   REST  GET  /orders/{id}/messages          — history (last 50)
   REST  GET  /orders/{id}/contact           — counterparty name + phone
-  REST  POST /orders/{id}/call              — initiate call (sends FCM to recipient)
+  REST  POST /orders/{id}/call              — initiate LiveKit call (sends FCM + returns caller token)
+  REST  POST /orders/{id}/livekit-token     — get LiveKit token for recipient after accepting call
   WS        /ws/orders/{id}/chat            — real-time messaging via Redis pub/sub
-  WS        /ws/orders/{id}/audio           — audio relay (server as intermediary)
 """
 import asyncio
 import json
 import logging
 import uuid
+from datetime import timedelta
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError
+from livekit.api import AccessToken, VideoGrants
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import current_user
 from app.config import get_settings
+from app.core.apns import send_voip_push_multi
+from sqlalchemy import delete as sql_delete
+
 from app.core.fcm import send_push
 from app.core.redis import get_redis
 from app.core.security import decode_access_token
@@ -30,19 +35,47 @@ from app.models.user import User, DeviceToken
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
-# In-memory audio relay rooms: order_id → [websocket, ...] (max 2)
-# NOTE: works only with a single Uvicorn worker (no shared state across workers)
-_audio_rooms: dict[str, list[WebSocket]] = {}
-
 _ACTIVE_STATUSES = {OrderStatus.accepted, OrderStatus.delivering}
+
+_TOKEN_TTL = timedelta(hours=1)
+
+
+async def _prune_stale_tokens(db: AsyncSession, stale: list[str]) -> None:
+    if not stale:
+        return
+    await db.execute(sql_delete(DeviceToken).where(DeviceToken.token.in_(stale)))
+    await db.commit()
 
 
 def _chat_channel(order_id: uuid.UUID) -> str:
     return f"shopho:chat:{order_id}"
 
 
-def _webrtc_channel(order_id: uuid.UUID) -> str:
-    return f"shopho:webrtc:{order_id}"
+def _user_channel(user_id: uuid.UUID) -> str:
+    return f"shopho:user:{user_id}:events"
+
+
+def _pending_call_key(user_id: uuid.UUID) -> str:
+    return f"shopho:pending_call:{user_id}"
+
+
+_CALL_RING_TTL = 45  # seconds — matches the ring timeout on the client side
+
+
+def _room_name(order_id: uuid.UUID) -> str:
+    return f"order-{order_id}"
+
+
+def _livekit_token(identity: str, display_name: str, room: str) -> str:
+    settings = get_settings()
+    token = (
+        AccessToken(api_key=settings.livekit_api_key, api_secret=settings.livekit_api_secret)
+        .with_identity(identity)
+        .with_name(display_name)
+        .with_grants(VideoGrants(room_join=True, room=room))
+        .with_ttl(_TOKEN_TTL)
+    )
+    return token.to_jwt()
 
 
 def _fmt(msg: ChatMessage, my_id: uuid.UUID) -> dict:
@@ -80,7 +113,7 @@ async def get_messages(
     return [_fmt(m, user.id) for m in result.scalars().all()]
 
 
-# ─── REST: initiate call ─────────────────────────────────────
+# ─── REST: initiate LiveKit call ─────────────────────────────
 
 @router.post("/orders/{order_id}/call")
 async def initiate_call(
@@ -104,33 +137,158 @@ async def initiate_call(
     if not recipient_id:
         raise HTTPException(404, "Chưa có người tiếp nhận")
 
-    rows = await db.execute(
-        select(DeviceToken.token).where(DeviceToken.user_id == recipient_id)
-    )
-    tokens = list(rows.scalars().all())
+    recipient = await db.scalar(select(User).where(User.id == recipient_id))
+    if not recipient:
+        raise HTTPException(404, "Không tìm thấy người nhận")
 
     caller_name = user.display_name or user.username
+    counterpart_name = recipient.display_name or recipient.username
+    room = _room_name(order_id)
+    settings = get_settings()
     call_id = str(uuid.uuid4())
 
-    # Fetch recipient name to show in caller's call screen
-    recipient = await db.scalar(select(User).where(User.id == recipient_id))
-    counterpart_name = (recipient.display_name or recipient.username) if recipient else "Đối phương"
+    caller_token = _livekit_token(
+        identity=f"user-{user.id}",
+        display_name=caller_name,
+        room=room,
+    )
 
-    if tokens:
-        await send_push(
-            tokens=tokens,
+    # Fetch all device tokens for recipient, split by platform
+    rows = await db.execute(
+        select(DeviceToken.token, DeviceToken.platform)
+        .where(DeviceToken.user_id == recipient_id)
+    )
+    all_tokens = rows.fetchall()
+
+    fcm_tokens  = [r.token for r in all_tokens if r.platform != "ios_voip"]
+    voip_tokens = [r.token for r in all_tokens if r.platform == "ios_voip"]
+
+    call_data = {
+        "type": "call",
+        "call_id": call_id,
+        "order_id": str(order_id),
+        "caller_name": caller_name,
+        "livekit_url": settings.livekit_url,
+        "room_name": room,
+    }
+
+    r = await get_redis()
+
+    # Store call in Redis so B can retrieve it when reconnecting WebSocket while
+    # A is still ringing. TTL matches client-side ring timeout.
+    await r.set(_pending_call_key(recipient_id), json.dumps(call_data), ex=_CALL_RING_TTL)
+
+    # WebSocket (instant, foreground only) — publish before FCM so app-foreground
+    # users get it immediately without waiting for FCM delivery.
+    await r.publish(_user_channel(recipient_id), json.dumps(call_data))
+
+    # Android + iOS foreground: FCM data-only (high priority)
+    stale: list[str] = []
+    if fcm_tokens:
+        stale = await send_push(
+            tokens=fcm_tokens,
             title=f"Cuộc gọi từ {caller_name}",
             body="Đang gọi...",
-            data={
-                "type": "call",
-                "call_id": call_id,
-                "order_id": str(order_id),
-                "caller_name": caller_name,
-            },
+            data=call_data,
             data_only=True,
         )
 
-    return {"order_id": str(order_id), "counterpart_name": counterpart_name}
+    # iOS background/killed: APNs VoIP (PushKit) — guaranteed to wake app
+    if voip_tokens:
+        await send_voip_push_multi(voip_tokens, call_data)
+
+    # Remove tokens FCM rejected as permanently invalid (non-blocking)
+    if stale:
+        await _prune_stale_tokens(db, stale)
+
+    return {
+        "call_id": call_id,
+        "order_id": str(order_id),
+        "counterpart_name": counterpart_name,
+        "livekit_url": settings.livekit_url,
+        "room_name": room,
+        "token": caller_token,
+    }
+
+
+# ─── REST: get LiveKit token (recipient fallback) ────────────
+
+@router.post("/orders/{order_id}/livekit-token")
+async def get_livekit_token(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Fallback for recipient to get their LiveKit token if FCM token was missing."""
+    order = await db.scalar(select(Order).where(Order.id == order_id))
+    if not order:
+        raise HTTPException(404, "Đơn không tồn tại")
+    if order.creator_id != user.id and order.shipper_id != user.id:
+        raise HTTPException(403, "Không có quyền truy cập")
+    if order.status not in _ACTIVE_STATUSES:
+        raise HTTPException(400, "Chỉ có thể gọi khi đơn đang được xử lý")
+
+    settings = get_settings()
+    room = _room_name(order_id)
+    display_name = user.display_name or user.username
+    token = _livekit_token(
+        identity=f"user-{user.id}",
+        display_name=display_name,
+        room=room,
+    )
+    return {"livekit_url": settings.livekit_url, "room_name": room, "token": token}
+
+
+# ─── REST: cancel call ───────────────────────────────────────
+
+@router.post("/orders/{order_id}/call-cancel")
+async def cancel_call(
+    order_id: uuid.UUID,
+    call_id: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    order = await db.scalar(select(Order).where(Order.id == order_id))
+    if not order:
+        raise HTTPException(404, "Đơn không tồn tại")
+
+    if order.creator_id == user.id:
+        recipient_id = order.shipper_id
+    elif order.shipper_id == user.id:
+        recipient_id = order.creator_id
+    else:
+        raise HTTPException(403, "Không có quyền truy cập")
+
+    if not recipient_id:
+        return {"ok": True}
+
+    rows = await db.execute(
+        select(DeviceToken.token, DeviceToken.platform)
+        .where(DeviceToken.user_id == recipient_id)
+    )
+    all_tokens = rows.fetchall()
+    fcm_tokens = [r.token for r in all_tokens if r.platform != "ios_voip"]
+
+    cancel_data = {"type": "call_cancel", "call_id": call_id, "order_id": str(order_id)}
+
+    r = await get_redis()
+    # Remove pending-call entries for both parties:
+    # - When A cancels: recipient_id=B → deletes B's key (correct)
+    # - When B declines: recipient_id=A → would miss B's key without user.id deletion
+    await r.delete(_pending_call_key(user.id), _pending_call_key(recipient_id))
+    await r.publish(_user_channel(recipient_id), json.dumps(cancel_data))
+
+    if fcm_tokens:
+        stale = await send_push(
+            tokens=fcm_tokens,
+            title="",
+            body="",
+            data=cancel_data,
+            data_only=True,
+        )
+        await _prune_stale_tokens(db, stale)
+
+    return {"ok": True}
 
 
 # ─── REST: contact info ──────────────────────────────────────
@@ -172,14 +330,12 @@ async def ws_chat(
     order_id: uuid.UUID,
     token: str = Query(...),
 ):
-    # 1. Authenticate
     try:
         user_id = uuid.UUID(decode_access_token(token))
     except (JWTError, ValueError):
         await websocket.close(code=4001)
         return
 
-    # 2. Validate order access
     async with SessionLocal() as db:
         order = await db.scalar(select(Order).where(Order.id == order_id))
         if not order or (order.creator_id != user_id and order.shipper_id != user_id):
@@ -194,9 +350,6 @@ async def ws_chat(
     await websocket.accept()
     channel = _chat_channel(order_id)
 
-    # 3. Subscribe to per-order Redis channel using the shared pool.
-    # Each pubsub() call borrows one connection from the pool for the duration
-    # of the subscription, avoiding per-WS pool creation.
     r = await get_redis()
     pubsub = r.pubsub()
     await pubsub.subscribe(channel)
@@ -225,7 +378,6 @@ async def ws_chat(
             if not content:
                 continue
 
-            # 4. Persist to DB + collect recipient tokens
             async with SessionLocal() as db:
                 msg = ChatMessage(order_id=order_id, sender_id=user_id, content=content)
                 db.add(msg)
@@ -238,7 +390,6 @@ async def ws_chat(
                     "created_at": msg.created_at.isoformat(),
                 })
 
-                # Determine recipient (the other party)
                 order_row = await db.scalar(select(Order).where(Order.id == order_id))
                 recipient_id = (
                     order_row.creator_id
@@ -254,84 +405,20 @@ async def ws_chat(
 
                 await db.commit()
 
-            # 5. Broadcast via Redis (real-time for open app)
             await r.publish(channel, payload)
 
-            # 6. FCM push (for background/closed app)
             if tokens:
                 preview = content if len(content) <= 60 else content[:57] + "..."
-                await send_push(
+                stale = await send_push(
                     tokens=tokens,
                     title=f"Tin nhắn từ {sender_name}",
                     body=preview,
                     data={"order_id": str(order_id), "type": "chat"},
                 )
+                if stale:
+                    async with SessionLocal() as db_prune:
+                        await _prune_stale_tokens(db_prune, stale)
 
-    except WebSocketDisconnect:
-        pass
-    finally:
-        listener.cancel()
-        try:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()  # close only the pubsub, not the shared pool
-        except Exception:
-            pass
-        logger.info("Chat WS disconnected order=%s user=%s", order_id, user_id)
-
-
-# ─── WebSocket: WebRTC signaling ─────────────────────────────
-
-@router.websocket("/ws/orders/{order_id}/webrtc")
-async def ws_webrtc(
-    websocket: WebSocket,
-    order_id: uuid.UUID,
-    token: str = Query(...),
-):
-    try:
-        user_id = uuid.UUID(decode_access_token(token))
-    except (JWTError, ValueError):
-        await websocket.close(code=4001)
-        return
-
-    async with SessionLocal() as db:
-        order = await db.scalar(select(Order).where(Order.id == order_id))
-        if not order or (order.creator_id != user_id and order.shipper_id != user_id):
-            await websocket.close(code=4003)
-            return
-
-    await websocket.accept()
-    channel = _webrtc_channel(order_id)
-
-    r = await get_redis()
-    pubsub = r.pubsub()
-    await pubsub.subscribe(channel)
-
-    async def _relay() -> None:
-        try:
-            async for message in pubsub.listen():
-                if message["type"] != "message":
-                    continue
-                data = json.loads(message["data"])
-                # Don't echo back to sender
-                if data.pop("_from", None) != str(user_id):
-                    try:
-                        await websocket.send_text(json.dumps(data))
-                    except Exception:
-                        break
-        except asyncio.CancelledError:
-            pass
-
-    listener = asyncio.create_task(_relay())
-
-    try:
-        while True:
-            raw = await websocket.receive_text()
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            data["_from"] = str(user_id)
-            await r.publish(channel, json.dumps(data))
     except WebSocketDisconnect:
         pass
     finally:
@@ -341,89 +428,69 @@ async def ws_webrtc(
             await pubsub.aclose()
         except Exception:
             pass
-        logger.info("WebRTC WS disconnected order=%s user=%s", order_id, user_id)
+        logger.info("Chat WS disconnected order=%s user=%s", order_id, user_id)
 
 
-# ─── WebSocket: audio relay (backend as intermediary) ────────
+# ─── WebSocket: user event stream (calls, cancel) ────────────
 
-@router.websocket("/ws/orders/{order_id}/audio")
-async def ws_audio(
+@router.websocket("/ws/user/events")
+async def ws_user_events(
     websocket: WebSocket,
-    order_id: uuid.UUID,
     token: str = Query(...),
 ):
+    """Per-user event stream. Delivers call/cancel events instantly when the
+    app is in the foreground, complementing FCM which can be slow."""
     try:
         user_id = uuid.UUID(decode_access_token(token))
     except (JWTError, ValueError):
         await websocket.close(code=4001)
         return
 
-    async with SessionLocal() as db:
-        order = await db.scalar(select(Order).where(Order.id == order_id))
-        if not order or (order.creator_id != user_id and order.shipper_id != user_id):
-            await websocket.close(code=4003)
-            return
-
     await websocket.accept()
-    room_key = str(order_id)
+    channel = _user_channel(user_id)
 
-    if room_key not in _audio_rooms:
-        _audio_rooms[room_key] = []
-    room = _audio_rooms[room_key]
+    r = await get_redis()
+    pubsub = r.pubsub()
+    await pubsub.subscribe(channel)
 
-    if len(room) >= 2:
-        await websocket.close(code=4008)  # room full
-        return
+    # Deliver any call that was initiated while this client was offline.
+    # Subscribe first, then check — avoids a race where a new call arrives
+    # between the Redis GET and the subscribe.
+    pending_raw = await r.get(_pending_call_key(user_id))
+    if pending_raw:
+        try:
+            await websocket.send_text(pending_raw)
+            logger.info("Delivered pending call to user %s on WS reconnect", user_id)
+        except Exception:
+            pass
 
-    room.append(websocket)
+    async def _redis_to_ws() -> None:
+        try:
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    await websocket.send_text(message["data"])
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
 
-    # Notify connection status
-    if len(room) == 1:
-        await websocket.send_json({"type": "waiting"})
-    else:
-        for ws in room:
-            try:
-                await ws.send_json({"type": "start"})
-            except Exception:
-                pass
-
-    def _peer() -> WebSocket | None:
-        return next((ws for ws in room if ws is not websocket), None)
+    listener = asyncio.create_task(_redis_to_ws())
 
     try:
         while True:
-            msg = await websocket.receive()
-            if msg.get("type") == "websocket.disconnect":
-                break
-
-            peer = _peer()
-            if peer is None:
-                continue
-
-            if msg.get("bytes"):
-                try:
-                    await peer.send_bytes(msg["bytes"])
-                except Exception:
-                    break
-            elif msg.get("text"):
-                try:
-                    data = json.loads(msg["text"])
-                    if data.get("type") == "hangup":
-                        await peer.send_json({"type": "hangup"})
-                        break
-                except Exception:
-                    pass
+            # Keep connection alive; client may send "ping"
+            raw = await websocket.receive_text()
+            if raw == "ping":
+                await websocket.send_text("pong")
     except WebSocketDisconnect:
         pass
     finally:
-        if websocket in room:
-            room.remove(websocket)
-        if not room:
-            _audio_rooms.pop(room_key, None)
-        else:
-            for ws in room:
-                try:
-                    await ws.send_json({"type": "hangup"})
-                except Exception:
-                    pass
-        logger.info("Audio WS disconnected order=%s user=%s", order_id, user_id)
+        listener.cancel()
+        try:
+            await pubsub.unsubscribe(channel)
+            await pubsub.aclose()
+        except Exception:
+            pass
+        logger.info("User event WS disconnected user=%s", user_id)

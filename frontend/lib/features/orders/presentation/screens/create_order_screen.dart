@@ -152,12 +152,16 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
         filename: x.name,
       )));
 
+      final aptMap = me['apartment'] as Map<String, dynamic>?;
+      final hasMultipleBuildings =
+          ((aptMap?['buildings'] as List?)?.length ?? 0) > 1;
+
       await ref.read(ordersRepositoryProvider).createOrder(
         note: _noteCtrl.text.trim(),
         goldReward: double.parse(_goldCtrl.text.trim()),
         shipLocation: _location.name,
         validityOption: _validity,
-        shipBuilding: me['apt_building'] as String?,
+        shipBuilding: hasMultipleBuildings ? me['apt_building'] as String? : null,
         shipFloor: (me['apt_floor'] as num?)?.toInt(),
         shipRoom: me['apt_room'] as String?,
         images: multiparts,
@@ -170,10 +174,17 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
         );
         context.pop();
       }
+    } on DioException catch (e) {
+      final msg = extractApiError(e, 'Tạo đơn thất bại');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg.toString()), backgroundColor: Colors.red),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red),
+          const SnackBar(content: Text('Đã xảy ra lỗi, vui lòng thử lại'), backgroundColor: Colors.red),
         );
       }
     } finally {

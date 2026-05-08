@@ -4,6 +4,7 @@ Every operation is wrapped in a DB transaction and writes to gold_ledger
 before modifying users.gold_balance – ensuring a complete audit trail.
 """
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select, update
@@ -88,13 +89,37 @@ async def lock_gold_for_order(
     user_id: uuid.UUID,
     order_id: uuid.UUID,
     amount: float,
+    order_note: str | None = None,
 ) -> float:
     """Deduct gold from creator when they create an order."""
     return await _record_and_update(
         db, user_id, Decimal(str(-amount)),
         GoldTxType.order_lock, order_id=order_id,
-        description=f"Khoá gold cho đơn {order_id}",
+        description=order_note,
         idempotency_key=f"lock:{order_id}",
+    )
+
+
+async def lock_gold_for_renew(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    order_id: uuid.UUID,
+    amount: float,
+    previous_expires_at: datetime,
+    order_note: str | None = None,
+) -> float:
+    """Re-lock gold when creator renews an expired order.
+
+    Uses the old expires_at timestamp as the idempotency discriminator so that:
+    - Retrying the same renewal attempt is safe (same key → no double deduction).
+    - A second renewal after the order expires again gets a fresh key.
+    """
+    key_suffix = int(previous_expires_at.timestamp())
+    return await _record_and_update(
+        db, user_id, Decimal(str(-amount)),
+        GoldTxType.order_lock, order_id=order_id,
+        description=order_note,
+        idempotency_key=f"renew_lock:{order_id}:{key_suffix}",
     )
 
 
@@ -103,12 +128,13 @@ async def reward_shipper(
     shipper_id: uuid.UUID,
     order_id: uuid.UUID,
     amount: float,
+    order_note: str | None = None,
 ) -> float:
     """Credit gold to shipper after accepting an order."""
     return await _record_and_update(
         db, shipper_id, Decimal(str(amount)),
         GoldTxType.order_reward, order_id=order_id,
-        description=f"Nhận gold từ đơn {order_id}",
+        description=order_note,
         idempotency_key=f"reward:{order_id}",
     )
 
@@ -118,12 +144,13 @@ async def refund_creator(
     creator_id: uuid.UUID,
     order_id: uuid.UUID,
     amount: float,
+    order_note: str | None = None,
 ) -> float:
     """Refund gold to creator when order is expired or cancelled (before accept)."""
     return await _record_and_update(
         db, creator_id, Decimal(str(amount)),
         GoldTxType.order_refund, order_id=order_id,
-        description=f"Hoàn gold đơn {order_id}",
+        description=order_note,
         idempotency_key=f"refund:{order_id}",
     )
 
@@ -133,12 +160,13 @@ async def partial_refund_on_delivery(
     creator_id: uuid.UUID,
     order_id: uuid.UUID,
     amount: float,
+    order_note: str | None = None,
 ) -> float:
     """Refund the gold difference to creator when shipper voluntarily reduces the reward."""
     return await _record_and_update(
         db, creator_id, Decimal(str(amount)),
         GoldTxType.order_refund, order_id=order_id,
-        description=f"Hoàn bớt gold do shipper giảm thưởng đơn {order_id}",
+        description=order_note,
         idempotency_key=f"delivery_partial_refund:{order_id}",
     )
 
@@ -148,12 +176,13 @@ async def refund_creator_on_accepted_cancel(
     creator_id: uuid.UUID,
     order_id: uuid.UUID,
     amount: float,
+    order_note: str | None = None,
 ) -> float:
     """Refund gold to creator when creator cancels an accepted order within the grace period."""
     return await _record_and_update(
         db, creator_id, Decimal(str(amount)),
         GoldTxType.order_refund, order_id=order_id,
-        description=f"Hoàn gold do huỷ đơn đã nhận {order_id}",
+        description=order_note,
         idempotency_key=f"creator_cancel_accepted:{order_id}",
     )
 
@@ -163,12 +192,13 @@ async def refund_creator_on_shipper_cancel(
     creator_id: uuid.UUID,
     order_id: uuid.UUID,
     amount: float,
+    order_note: str | None = None,
 ) -> float:
     """Refund gold to creator when shipper cancels an accepted/delivering order."""
     return await _record_and_update(
         db, creator_id, Decimal(str(amount)),
         GoldTxType.order_refund, order_id=order_id,
-        description=f"Hoàn gold do shipper huỷ đơn {order_id}",
+        description=order_note,
         idempotency_key=f"shipper_cancel_refund:{order_id}",
     )
 
@@ -179,6 +209,7 @@ async def adjust_gold_for_order_edit(
     order_id: uuid.UUID,
     old_amount: float,
     new_amount: float,
+    order_note: str | None = None,
 ) -> None:
     """Adjust locked gold when creator edits the reward on a pending order."""
     diff = new_amount - old_amount
@@ -190,14 +221,14 @@ async def adjust_gold_for_order_edit(
         await _record_and_update(
             db, creator_id, Decimal(str(-diff)),
             GoldTxType.order_lock, order_id=order_id,
-            description=f"Khoá thêm gold sửa đơn {order_id}",
+            description=order_note,
             idempotency_key=f"edit_lock:{order_id}:{new_cents}",
         )
     else:
         await _record_and_update(
             db, creator_id, Decimal(str(-diff)),  # -diff > 0 → credit
             GoldTxType.order_refund, order_id=order_id,
-            description=f"Hoàn bớt gold sửa đơn {order_id}",
+            description=order_note,
             idempotency_key=f"edit_refund:{order_id}:{new_cents}",
         )
 
@@ -208,11 +239,16 @@ async def dispute_gold(
     shipper_id: uuid.UUID,
     order_id: uuid.UUID,
     gold_reward: float,
+    order_note: str | None = None,
 ) -> None:
-    """On dispute: shipper gets 50%, creator is refunded the rest (handles odd amounts)."""
-    total = Decimal(str(gold_reward))
-    shipper_share = (total / 2).quantize(Decimal("0.01"))
-    creator_refund = total - shipper_share
+    """On dispute: shipper gets floor(gold/2), creator gets the rest.
+
+    Even gold (e.g. 4): shipper=2, creator=2.
+    Odd gold (e.g. 5): shipper=2, creator=3 (the remainder goes to creator).
+    """
+    total_int = int(gold_reward)
+    shipper_share = Decimal(total_int // 2)
+    creator_refund = Decimal(total_int) - shipper_share
 
     # Always acquire user row locks in UUID order to prevent deadlocks.
     # Two concurrent transactions touching the same pair of users (e.g. user A
@@ -222,26 +258,26 @@ async def dispute_gold(
         await _record_and_update(
             db, shipper_id, shipper_share,
             GoldTxType.order_reward, order_id=order_id,
-            description=f"Nhận 50% gold (xung đột) từ đơn {order_id}",
+            description=order_note,
             idempotency_key=f"dispute_reward:{order_id}",
         )
         await _record_and_update(
             db, creator_id, creator_refund,
             GoldTxType.order_refund, order_id=order_id,
-            description=f"Hoàn gold (xung đột) đơn {order_id}",
+            description=order_note,
             idempotency_key=f"dispute_refund:{order_id}",
         )
     else:
         await _record_and_update(
             db, creator_id, creator_refund,
             GoldTxType.order_refund, order_id=order_id,
-            description=f"Hoàn gold (xung đột) đơn {order_id}",
+            description=order_note,
             idempotency_key=f"dispute_refund:{order_id}",
         )
         await _record_and_update(
             db, shipper_id, shipper_share,
             GoldTxType.order_reward, order_id=order_id,
-            description=f"Nhận 50% gold (xung đột) từ đơn {order_id}",
+            description=order_note,
             idempotency_key=f"dispute_reward:{order_id}",
         )
 
@@ -252,13 +288,14 @@ async def reduce_gold_in_delivery(
     order_id: uuid.UUID,
     diff: float,
     new_gold: float,
+    order_note: str | None = None,
 ) -> float:
     """Refund the gold difference to creator when shipper reduces reward while in delivering state."""
     new_cents = int(round(new_gold * 100))
     return await _record_and_update(
         db, creator_id, Decimal(str(diff)),
         GoldTxType.order_refund, order_id=order_id,
-        description=f"Shipper giảm gold khi đang giao đơn {order_id}",
+        description=order_note,
         idempotency_key=f"reduce_delivering:{order_id}:{new_cents}",
     )
 
@@ -269,6 +306,7 @@ async def bonus_gold_on_completion(
     shipper_id: uuid.UUID,
     order_id: uuid.UUID,
     bonus: float,
+    order_note: str | None = None,
 ) -> None:
     """Deduct bonus gold from creator and credit it to shipper at order completion."""
     # Lock in UUID order (same deadlock-prevention rule as dispute_gold).
@@ -276,26 +314,26 @@ async def bonus_gold_on_completion(
         await _record_and_update(
             db, creator_id, Decimal(str(-bonus)),
             GoldTxType.order_lock, order_id=order_id,
-            description=f"Thưởng thêm cho shipper đơn {order_id}",
+            description=order_note,
             idempotency_key=f"bonus_complete_deduct:{order_id}",
         )
         await _record_and_update(
             db, shipper_id, Decimal(str(bonus)),
             GoldTxType.order_reward, order_id=order_id,
-            description=f"Nhận thưởng thêm từ đơn {order_id}",
+            description=order_note,
             idempotency_key=f"bonus_complete_reward:{order_id}",
         )
     else:
         await _record_and_update(
             db, shipper_id, Decimal(str(bonus)),
             GoldTxType.order_reward, order_id=order_id,
-            description=f"Nhận thưởng thêm từ đơn {order_id}",
+            description=order_note,
             idempotency_key=f"bonus_complete_reward:{order_id}",
         )
         await _record_and_update(
             db, creator_id, Decimal(str(-bonus)),
             GoldTxType.order_lock, order_id=order_id,
-            description=f"Thưởng thêm cho shipper đơn {order_id}",
+            description=order_note,
             idempotency_key=f"bonus_complete_deduct:{order_id}",
         )
 

@@ -58,6 +58,22 @@ class OrderListItem with _$OrderListItem {
 }
 
 @freezed
+class OrderUserInfo with _$OrderUserInfo {
+  const factory OrderUserInfo({
+    required String id,
+    required String username,
+    @JsonKey(name: 'display_name') String? displayName,
+    @JsonKey(name: 'avatar_url') String? avatarUrl,
+  }) = _OrderUserInfo;
+
+  factory OrderUserInfo.fromJson(Map<String, dynamic> json) => _$OrderUserInfoFromJson(json);
+}
+
+extension OrderUserInfoX on OrderUserInfo {
+  String get name => displayName?.isNotEmpty == true ? displayName! : username;
+}
+
+@freezed
 class OrderDetail with _$OrderDetail {
   const factory OrderDetail({
     required String id,
@@ -74,12 +90,15 @@ class OrderDetail with _$OrderDetail {
     required OrderStatus status,
     @JsonKey(name: 'created_at') required DateTime createdAt,
     @JsonKey(name: 'accepted_at') DateTime? acceptedAt,
+    @JsonKey(name: 'delivering_at') DateTime? deliveringAt,
     @JsonKey(name: 'completed_at') DateTime? completedAt,
     required List<OrderImage> images,
     @JsonKey(name: 'ship_apartment_name') String? shipApartmentName,
     @JsonKey(name: 'estimated_minutes') int? estimatedMinutes,
     @JsonKey(name: 'estimated_delivery_at') DateTime? estimatedDeliveryAt,
     @JsonKey(name: 'min_proposed_gold') double? minProposedGold,
+    OrderUserInfo? creator,
+    OrderUserInfo? shipper,
   }) = _OrderDetail;
 
   factory OrderDetail.fromJson(Map<String, dynamic> json) => _$OrderDetailFromJson(json);

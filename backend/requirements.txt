@@ -26,6 +26,12 @@ email-validator==2.2.0
 # Scheduler (order expiry)
 apscheduler==3.10.4
 
+# LiveKit (voice call token generation)
+livekit-api==0.7.1
+
+# APNs VoIP push (iOS call notifications)
+httpx[http2]==0.28.0
+
 # Utils
 python-dotenv==1.0.1
 httpx==0.28.0

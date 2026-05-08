@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../../core/widgets/contact_footer.dart';
 
 final _meProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final res = await ref.read(apiClientProvider).dio.get('/users/me');
@@ -24,7 +25,7 @@ class HomeScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.person_outline),
-            onPressed: () => context.push('/profile'),
+            onPressed: () => context.push('/profile').then((_) => ref.invalidate(_meProvider)),
           ),
         ],
       ),
@@ -58,7 +59,7 @@ class HomeScreen extends ConsumerWidget {
                         end: Alignment.bottomRight,
                       ),
                       shadowColor: const Color(0xFF5B6AF0),
-                      onTap: () => context.push('/orders/browse'),
+                      onTap: () => context.push('/orders/browse').then((_) => ref.invalidate(_meProvider)),
                     ),
                   ),
                   const SizedBox(width: 14),
@@ -74,13 +75,17 @@ class HomeScreen extends ConsumerWidget {
                         end: Alignment.bottomRight,
                       ),
                       shadowColor: const Color(0xFFF5A623),
-                      onTap: () => context.push('/orders/my-created'),
+                      onTap: () => context.push('/orders/my-created').then((_) => ref.invalidate(_meProvider)),
                     ),
                   ),
                 ],
               ),
 
               const SizedBox(height: 32),
+
+              // ── Contact footer ────────────────────────────────
+              const ContactFooter(),
+              const SizedBox(height: 16),
             ],
           ),
         ),
@@ -113,16 +118,28 @@ class _GoldCard extends ConsumerWidget {
         children: [
           const Icon(Icons.monetization_on_rounded, color: Color(0xFFF5A623), size: 40),
           const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Số dư Gold', style: TextStyle(color: Colors.white70, fontSize: 13)),
-              const SizedBox(height: 4),
-              Text(
-                gold != null ? '$gold Gold' : '-- Gold',
-                style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Số dư Gold', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 4),
+                Text(
+                  gold != null ? '$gold Gold' : '-- Gold',
+                  style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => context.push('/gold/history'),
+            icon: const Icon(Icons.history_rounded, size: 16, color: Colors.white70),
+            label: const Text('Lịch sử', style: TextStyle(color: Colors.white70, fontSize: 13)),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              backgroundColor: Colors.white.withValues(alpha: 0.12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
         ],
       ),
@@ -172,8 +189,8 @@ class _AppIntro extends StatelessWidget {
             style: tt.bodySmall?.copyWith(color: Colors.grey.shade700, height: 1.5),
           ),
           const SizedBox(height: 14),
-          Row(
-            children: const [
+          const Row(
+            children: [
               Expanded(child: _FeatureChip(icon: Icons.local_shipping_outlined,  label: 'Ship tận nơi')),
               SizedBox(width: 8),
               Expanded(child: _FeatureChip(icon: Icons.monetization_on_outlined, label: 'Kiếm Gold')),

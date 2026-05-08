@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.order import ShipLocationType
 from app.models.user import User
 from app.schemas.order import AcceptOrderBody, AcceptOrderResponse, CompleteOrderBody, DeliverOrderBody, GoldProposalResponse, MarketPriceItem, OrderCreate, OrderListItem, OrderResponse, ProposeGoldBody, ReduceGoldBody
-from app.services.order_service import OrderError, accept_gold_proposal, accept_order, cancel_order, complete_order, create_order, dispute_order, list_pending_orders, list_proposals, propose_gold, shipper_cancel_order, shipper_confirm_delivery, shipper_reduce_gold, update_order
+from app.services.order_service import OrderError, accept_gold_proposal, accept_order, cancel_order, complete_order, create_order, dispute_order, list_pending_orders, list_proposals, propose_gold, renew_order, shipper_cancel_order, shipper_confirm_delivery, shipper_reduce_gold, update_order
 from app.services.storage_service import upload_image
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -288,6 +288,20 @@ async def dispute_order_endpoint(
 ):
     try:
         return await dispute_order(db, user, order_id)
+    except OrderError as e:
+        _raise(e)
+
+
+# ─── RENEW ──────────────────────────────────────────────────
+
+@router.post("/{order_id}/renew", response_model=OrderResponse)
+async def renew_order_endpoint(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    try:
+        return await renew_order(db, user, order_id)
     except OrderError as e:
         _raise(e)
 

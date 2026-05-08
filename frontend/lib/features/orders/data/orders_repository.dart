@@ -87,6 +87,11 @@ class OrdersRepository {
     await _dio.post('/orders/$orderId/cancel');
   }
 
+  Future<OrderDetail> renewOrder(String orderId) async {
+    final res = await _dio.post('/orders/$orderId/renew');
+    return OrderDetail.fromJson(res.data);
+  }
+
   Future<OrderDetail> completeOrder(String orderId, {double? bonusGold}) async {
     final res = await _dio.post(
       '/orders/$orderId/complete',
