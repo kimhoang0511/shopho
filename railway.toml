@@ -5,7 +5,6 @@ dockerfilePath = "Dockerfile"
 [deploy]
 # Runs migrations before each new deploy goes live.
 # If this fails, Railway aborts the deploy and keeps the old version running.
-releaseCommand = "python migrate.py"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"
