@@ -273,7 +273,7 @@ Future<bool?> _showApartmentDialog(BuildContext context, WidgetRef ref, Apartmen
                 // Ảnh preview + chọn ảnh
                 GestureDetector(
                   onTap: () async {
-                    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 80);
+                    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 72, maxWidth: 1080, maxHeight: 1080);
                     if (picked != null) setState(() => pickedImage = File(picked.path));
                   },
                   child: Container(

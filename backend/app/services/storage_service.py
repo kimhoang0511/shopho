@@ -31,7 +31,7 @@ ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
 MAX_SIZE_MB = 3
 
 
-async def upload_image(file: UploadFile) -> tuple[str, str]:
+async def upload_image(file: UploadFile, prefix: str = "orders") -> tuple[str, str]:
     """Upload image to Cloudflare R2. Returns (storage_key, public_url)."""
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise ValueError(f"Định dạng ảnh không hợp lệ: {file.content_type}")
@@ -41,7 +41,7 @@ async def upload_image(file: UploadFile) -> tuple[str, str]:
         raise ValueError(f"Ảnh không được vượt quá {MAX_SIZE_MB}MB")
 
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else "jpg"
-    key = f"orders/{uuid.uuid4()}.{ext}"
+    key = f"{prefix}/{uuid.uuid4()}.{ext}"
 
     _get_client().put_object(
         Bucket=settings.r2_bucket_name,
