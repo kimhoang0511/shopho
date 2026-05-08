@@ -87,7 +87,7 @@ class _EditFormState extends ConsumerState<_EditForm> {
   }
 
   Future<void> _pickImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 72, maxWidth: 1080, maxHeight: 1080);
     if (picked != null) setState(() { _newImage = picked; _keepImage = true; });
   }
 

@@ -139,7 +139,7 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
   }
 
   Future<void> _pickImages() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 72, maxWidth: 1080, maxHeight: 1080);
     if (picked != null) setState(() { _images..clear()..add(picked); });
   }
 

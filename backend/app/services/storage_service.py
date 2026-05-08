@@ -28,7 +28,7 @@ def _get_client():
 
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
-MAX_SIZE_MB = 10
+MAX_SIZE_MB = 3
 
 
 async def upload_image(file: UploadFile) -> tuple[str, str]:
