@@ -1,4 +1,6 @@
 """Firebase Cloud Messaging helper."""
+import base64
+import json
 import logging
 import os
 from datetime import timedelta
@@ -15,12 +17,22 @@ def _init() -> bool:
     try:
         import firebase_admin
         from firebase_admin import credentials
-        sa_path = os.path.join(os.path.dirname(__file__), "../../firebase-service-account.json")
-        sa_path = os.path.abspath(sa_path)
-        if not os.path.exists(sa_path):
-            logger.warning("firebase-service-account.json not found at %s", sa_path)
-            return False
-        cred = credentials.Certificate(sa_path)
+
+        # Priority 1: base64-encoded JSON in env var (for Railway/cloud)
+        b64 = os.environ.get("FIREBASE_SERVICE_ACCOUNT_B64")
+        if b64:
+            sa_dict = json.loads(base64.b64decode(b64).decode())
+            cred = credentials.Certificate(sa_dict)
+        else:
+            # Priority 2: local file (for development)
+            sa_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../firebase-service-account.json")
+            )
+            if not os.path.exists(sa_path):
+                logger.warning("FCM: no FIREBASE_SERVICE_ACCOUNT_B64 env var and no file at %s", sa_path)
+                return False
+            cred = credentials.Certificate(sa_path)
+
         if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
         _initialized = True

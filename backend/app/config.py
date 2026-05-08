@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     # DB
     database_url: str
     database_pool_size: int = 10
+
+    @property
+    def async_database_url(self) -> str:
+        return self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
     database_max_overflow: int = 20
 
     # Redis
