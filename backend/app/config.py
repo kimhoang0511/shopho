@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     android_store_url: str = ""
     ios_store_url: str = ""
 
+    # VietQR / Payment top-up
+    vietqr_bank_id: str = ""          # e.g. "MB" or "VCB"
+    vietqr_account_number: str = ""   # bank account number
+    payment_webhook_secret: str = ""  # secret token to verify webhook calls
+
 
 @lru_cache
 def get_settings() -> Settings:

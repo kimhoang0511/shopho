@@ -110,6 +110,24 @@ class GoldHistoryScreen extends ConsumerWidget {
         surfaceTintColor: Colors.transparent,
         title: const Text('Lịch sử Gold', style: TextStyle(fontWeight: FontWeight.bold)),
         leading: BackButton(onPressed: () => context.canPop() ? context.pop() : context.go('/home')),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton.icon(
+              onPressed: () async {
+                final refreshed = await context.push<bool>('/gold/topup');
+                if (refreshed == true) ref.invalidate(_historyProvider);
+              },
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Nạp Gold', style: TextStyle(fontWeight: FontWeight.bold)),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF5B6AF0),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
       ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
