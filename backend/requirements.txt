@@ -15,8 +15,8 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 python-multipart==0.0.12
 
-# Storage
-minio==7.2.12
+# Storage (Cloudflare R2 via boto3 S3-compatible API)
+boto3==1.35.0
 
 # Validation
 pydantic==2.10.3

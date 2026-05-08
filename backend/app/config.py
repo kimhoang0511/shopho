@@ -22,12 +22,12 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 30
 
-    # MinIO
-    minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
-    minio_bucket: str = "shopho-images"
-    minio_use_ssl: bool = False
+    # Cloudflare R2 (S3-compatible storage)
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "order-food-images"
+    r2_public_url: str = ""
 
     # App
     app_env: str = "development"

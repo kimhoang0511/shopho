@@ -1,41 +1,29 @@
-"""MinIO image upload service."""
+"""Cloudflare R2 image upload service (S3-compatible via boto3)."""
+import io
 import uuid
 
+import boto3
+from botocore.config import Config
 from fastapi import UploadFile
-from minio import Minio
-from minio.error import S3Error
 
 from app.config import get_settings
 
 settings = get_settings()
 
-_client: Minio | None = None
+_client = None
 
 
-def _get_client() -> Minio:
+def _get_client():
     global _client
     if _client is None:
-        _client = Minio(
-            settings.minio_endpoint,
-            access_key=settings.minio_access_key,
-            secret_key=settings.minio_secret_key,
-            secure=settings.minio_use_ssl,
+        _client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=settings.r2_access_key_id,
+            aws_secret_access_key=settings.r2_secret_access_key,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
         )
-        # Ensure bucket exists
-        if not _client.bucket_exists(settings.minio_bucket):
-            _client.make_bucket(settings.minio_bucket)
-            # Set public read policy
-            import json
-            policy = {
-                "Version": "2012-10-17",
-                "Statement": [{
-                    "Effect": "Allow",
-                    "Principal": {"AWS": ["*"]},
-                    "Action": ["s3:GetObject"],
-                    "Resource": [f"arn:aws:s3:::{settings.minio_bucket}/*"],
-                }],
-            }
-            _client.set_bucket_policy(settings.minio_bucket, json.dumps(policy))
     return _client
 
 
@@ -44,7 +32,7 @@ MAX_SIZE_MB = 10
 
 
 async def upload_image(file: UploadFile) -> tuple[str, str]:
-    """Upload image to MinIO. Returns (storage_key, public_url)."""
+    """Upload image to Cloudflare R2. Returns (storage_key, public_url)."""
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise ValueError(f"Định dạng ảnh không hợp lệ: {file.content_type}")
 
@@ -55,16 +43,13 @@ async def upload_image(file: UploadFile) -> tuple[str, str]:
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else "jpg"
     key = f"orders/{uuid.uuid4()}.{ext}"
 
-    import io
-    client = _get_client()
-    client.put_object(
-        settings.minio_bucket,
-        key,
-        io.BytesIO(contents),
-        length=len(contents),
-        content_type=file.content_type,
+    _get_client().put_object(
+        Bucket=settings.r2_bucket_name,
+        Key=key,
+        Body=io.BytesIO(contents),
+        ContentType=file.content_type,
+        CacheControl="public, max-age=31536000",
     )
 
-    protocol = "https" if settings.minio_use_ssl else "http"
-    public_url = f"{protocol}://{settings.minio_endpoint}/{settings.minio_bucket}/{key}"
+    public_url = f"{settings.r2_public_url.rstrip('/')}/{key}"
     return key, public_url
