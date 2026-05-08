@@ -35,8 +35,15 @@ String extractApiError(DioException e, String fallback) {
   return fallback;
 }
 
-const apiBaseUrl = 'http://192.168.100.195:8000/api/v1';
-const wsBaseUrl = 'ws://192.168.100.195:8000/api/v1';
+const _productionHost = 'shopho-production.up.railway.app'; // TODO: thay bằng domain Railway thực tế
+const _isDev = bool.fromEnvironment('FLUTTER_DEV', defaultValue: false);
+
+const apiBaseUrl = _isDev
+    ? 'http://192.168.100.195:8000/api/v1'
+    : 'https://$_productionHost/api/v1';
+const wsBaseUrl = _isDev
+    ? 'ws://192.168.100.195:8000/api/v1'
+    : 'wss://$_productionHost/api/v1';
 
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
 
